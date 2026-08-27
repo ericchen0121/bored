@@ -9,3 +9,5 @@ dist
 coverage
 drizzle/meta
 *.tsbuildinfo
+.pnpm-store
+.pnpm-home
