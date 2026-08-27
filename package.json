@@ -1,0 +1,21 @@
+{
+  "name": "bored",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @bored/api --filter @bored/web dev",
+    "dev:api": "pnpm --filter @bored/api dev",
+    "dev:web": "pnpm --filter @bored/web dev",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @bored/db generate",
+    "db:migrate": "pnpm --filter @bored/db migrate",
+    "db:push": "pnpm --filter @bored/db push",
+    "db:seed": "pnpm --filter @bored/db seed",
+    "ingest:once": "pnpm --filter @bored/ingest exec tsx src/cli.ts --once",
+    "ingest": "pnpm --filter @bored/ingest exec tsx src/cli.ts --schedule",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

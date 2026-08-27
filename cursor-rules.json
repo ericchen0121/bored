@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "description": "Source adapters stay interchangeable",
+      "examples": [
+        "All external sources live in packages/ingest/src/adapters/* implementing SourceAdapter.",
+        "Normalize through upsertEvents / upsertShowtimes — never write source-specific SQL in the API.",
+        "New cities or sources = new adapter + schedule entry."
+      ],
+      "importance": "high"
+    },
+    {
+      "description": "API-first shared backend",
+      "examples": [
+        "Web and future iOS only talk to apps/api /v1/*.",
+        "Keep ranking in @bored/shared so clients stay thin."
+      ],
+      "importance": "high"
+    },
+    {
+      "description": "Outbound CTAs go through /r redirects",
+      "examples": [
+        "Event and showtime ticket/register links use GET /r/e/:id and /r/s/:id — never raw third-party URLs in primary CTAs.",
+        "Affiliate + UTM rewriting lives in packages/shared/src/affiliate.ts; destinations always resolve from DB.",
+        "Strategy and packages: docs/monetization.md."
+      ],
+      "importance": "medium"
+    },
+    {
+      "description": "Git safety",
+      "examples": [
+        "Don't commit or git add until explicitly asked.",
+        "Never push or merge automatically."
+      ],
+      "importance": "high"
+    }
+  ],
+  "meta": {
+    "projectContext": "SF Bay Area + Chicago events discovery — feed quality first, multi-user ready.",
+    "styleGuide": "TypeScript monorepo, Next.js web, Hono API, Drizzle/Postgres, Fraunces + DM Sans fog/night SF aesthetic."
+  }
+}
