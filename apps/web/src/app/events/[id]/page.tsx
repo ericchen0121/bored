@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { trackDetailOpened } from "@/lib/analytics";
 import { FeedBackLink } from "@/components/FeedBackLink";
 import { EventDetailContent } from "@/components/detail/EventDetailContent";
 import type { EventDetail } from "@/components/detail/types";
@@ -14,7 +15,14 @@ export default function EventDetailPage() {
 
   useEffect(() => {
     void api<EventDetail>(`/v1/events/${params.id}`)
-      .then(setEvent)
+      .then((data) => {
+        setEvent(data);
+        trackDetailOpened({
+          kind: "event",
+          id: params.id,
+          surface: "standalone",
+        });
+      })
       .catch((err: Error) => setError(err.message));
   }, [params.id]);
 

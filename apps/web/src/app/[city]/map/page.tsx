@@ -16,6 +16,13 @@ import {
   type FeedCity,
 } from "@bored/shared";
 import { api } from "@/lib/api";
+import {
+  trackDetailOpened,
+  trackFeedDateChanged,
+  trackFeedModeChanged,
+  trackFeedTopicChanged,
+  trackMapOpened,
+} from "@/lib/analytics";
 import { MapDateControl } from "@/components/map/MapDateControl";
 import { MapEventSidebar } from "@/components/map/MapEventSidebar";
 import { MapEventsMap } from "@/components/map/MapEventsMap";
@@ -111,6 +118,12 @@ function CityMapPage({ city }: { city: FeedCity }) {
     () => selectionFromParams(searchParams),
     [searchParams],
   );
+
+  useEffect(() => {
+    trackMapOpened({ city, area });
+    // Once per map mount for this city
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city]);
 
   const syncUrl = useCallback(
     (
@@ -310,6 +323,11 @@ function CityMapPage({ city }: { city: FeedCity }) {
     (card: FeedCard) => {
       if (!isDesktop) setSheetOpen(true);
       const next = selectionFromCard(card);
+      trackDetailOpened({
+        kind: next.kind,
+        id: next.id,
+        surface: "map",
+      });
       syncUrl(mode, area, sources, date, next);
     },
     [syncUrl, mode, area, sources, date, isDesktop],
@@ -332,38 +350,43 @@ function CityMapPage({ city }: { city: FeedCity }) {
       setTopics(next);
       setMapFilterIds(null);
       setSelectedClusterId(null);
+      trackFeedTopicChanged({ topics: next, city, surface: "map" });
       syncUrl(mode, area, sources, date, selection, next);
     },
-    [topics, syncUrl, mode, area, sources, date, selection],
+    [topics, city, syncUrl, mode, area, sources, date, selection],
   );
 
   const clearTopics = useCallback(() => {
     setTopics([]);
     setMapFilterIds(null);
     setSelectedClusterId(null);
+    trackFeedTopicChanged({ topics: [], city, surface: "map" });
     syncUrl(mode, area, sources, date, selection, []);
-  }, [syncUrl, mode, area, sources, date, selection]);
+  }, [city, syncUrl, mode, area, sources, date, selection]);
 
   const selectToday = useCallback(() => {
     const today = dayKey(new Date(), timeZone);
     setMode("today");
     setDate(today);
+    trackFeedModeChanged({ mode: "today", city, area });
     syncUrl("today", area, sources, today, selection);
-  }, [timeZone, area, sources, selection, syncUrl]);
+  }, [timeZone, city, area, sources, selection, syncUrl]);
 
   const selectWeekend = useCallback(() => {
     setMode("weekend");
     setDate(null);
+    trackFeedModeChanged({ mode: "weekend", city, area });
     syncUrl("weekend", area, sources, null, selection);
-  }, [area, sources, selection, syncUrl]);
+  }, [city, area, sources, selection, syncUrl]);
 
   const selectDate = useCallback(
     (nextDate: string) => {
       setMode("date");
       setDate(nextDate);
+      trackFeedDateChanged({ date: nextDate, mode: "date", city });
       syncUrl("date", area, sources, nextDate, selection);
     },
-    [area, sources, selection, syncUrl],
+    [city, area, sources, selection, syncUrl],
   );
 
   const clearMapFilter = useCallback(() => {
@@ -389,7 +412,10 @@ function CityMapPage({ city }: { city: FeedCity }) {
       }
       const card = cards.find((c) => c.id === id);
       if (card) openDetail(card);
-      else syncUrl(mode, area, sources, date, { kind: "event", id });
+      else {
+        trackDetailOpened({ kind: "event", id, surface: "map" });
+        syncUrl(mode, area, sources, date, { kind: "event", id });
+      }
     },
     [cards, openDetail, syncUrl, mode, area, sources, date, isDesktop],
   );

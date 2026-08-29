@@ -39,7 +39,7 @@ All three app services build from the **repo root** `Dockerfile`.
 | Dockerfile | `Dockerfile` | `Dockerfile` | `Dockerfile` |
 | `SERVICE` | `api` | `web` | `ingest` |
 | Health check | `/health` | `/` (or none) | none |
-| Build args | — | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | `INSTALL_PLAYWRIGHT=1` if flyer scrape needed |
+| Build args | — | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `NEXT_PUBLIC_POSTHOG_*` | `INSTALL_PLAYWRIGHT=1` if flyer scrape needed |
 
 ### Variables
 
@@ -60,6 +60,8 @@ All three app services build from the **repo root** `Dockerfile`.
 | `INGEST_RUN_ON_BOOT` | ingest | Set `1` to run Phase 1 once when the worker starts |
 | `NEXT_PUBLIC_API_URL` | web (**build**) | Public API URL, e.g. `https://api-….up.railway.app` |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | web (**build**) | Map page |
+| `NEXT_PUBLIC_POSTHOG_KEY` | web (**build**) | Product analytics (optional) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | web (**build**) | PostHog host; default `https://us.i.posthog.com` |
 
 Affiliate / UTM vars (`TICKETMASTER_AFFILIATE_ID`, `OUTBOUND_UTM_*`, …) go on **api**.
 

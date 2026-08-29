@@ -15,6 +15,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import {
+  trackOnboardingCompleted,
+  trackOnboardingViewed,
+} from "@/lib/analytics";
 import { feedHomeHref, readFeedPrefs } from "@/lib/feed-prefs";
 
 const MUSIC_GENRE_SET = new Set<string>(MUSIC_GENRE_CATEGORIES);
@@ -50,6 +54,10 @@ export default function OnboardingPage() {
   );
 
   const cityLabel = city === "chicago" ? "Chicago" : "SF / Bay";
+
+  useEffect(() => {
+    trackOnboardingViewed();
+  }, []);
 
   useEffect(() => {
     const activeCity = resolveOnboardingCity();
@@ -128,6 +136,12 @@ export default function OnboardingPage() {
           lat: loc.lat,
           lng: loc.lng,
         }),
+      });
+      trackOnboardingCompleted({
+        city,
+        interest_count: interests.length,
+        neighborhood_count: neighborhoods.length,
+        budget_max: budgetMax,
       });
       setSavedOk(true);
       router.push(feedHomeHref("for_you"));

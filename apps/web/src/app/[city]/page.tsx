@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { FeedCard, FeedFilterSource, FeedMode, FeedTopic } from "@bored/shared";
 import {
   FEED_TOPIC_EMOJI,
@@ -18,6 +25,16 @@ import {
   type FeedCity,
 } from "@bored/shared";
 import { api } from "@/lib/api";
+import {
+  trackFeedAreaChanged,
+  trackFeedDateChanged,
+  trackFeedLoaded,
+  trackFeedModeChanged,
+  trackFeedSourcesChanged,
+  trackFeedTopicChanged,
+  trackFeedViewChanged,
+  trackDetailOpened,
+} from "@/lib/analytics";
 import { CityHero } from "@/components/CityHero";
 import { FeedCardView } from "@/components/FeedCardView";
 import { ByTimeFeed } from "@/components/ByTimeFeed";
@@ -37,7 +54,10 @@ import {
   feedCalendarMeta,
   type FeedCalendarMeta,
 } from "@/lib/feed-calendar";
-import { gatheringPhraseForArea } from "@/lib/gathering-phrase";
+import {
+  feedRefreshPhrase,
+  gatheringPhraseForArea,
+} from "@/lib/gathering-phrase";
 import {
   type FeedArea,
   type FeedView,
@@ -181,7 +201,13 @@ function CityFeedCity({ city }: { city: FeedCity }) {
 
   const openDetail = useCallback(
     (card: FeedCard) => {
-      syncUrl(mode, area, sources, date, selectionFromCard(card));
+      const next = selectionFromCard(card);
+      trackDetailOpened({
+        kind: next.kind,
+        id: next.id,
+        surface: "feed",
+      });
+      syncUrl(mode, area, sources, date, next);
     },
     [syncUrl, mode, area, sources, date],
   );
@@ -196,9 +222,10 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         nextMode === "today" ? dayKey(new Date(), timeZone) : null;
       setMode(nextMode);
       setDate(nextDate);
+      trackFeedModeChanged({ mode: nextMode, city, area });
       syncUrl(nextMode, area, sources, nextDate);
     },
-    [area, sources, timeZone, syncUrl],
+    [city, area, sources, timeZone, syncUrl],
   );
 
   const selectDay = useCallback(
@@ -206,9 +233,10 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       const nextMode = mode === "weekend" ? "weekend" : "date";
       setDate(nextDate);
       setMode(nextMode);
+      trackFeedDateChanged({ date: nextDate, mode: nextMode, city });
       syncUrl(nextMode, area, sources, nextDate);
     },
-    [mode, area, sources, syncUrl],
+    [mode, city, area, sources, syncUrl],
   );
 
   // Keep area/sources in sync when the path city or ?area= changes.
@@ -279,6 +307,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const selectFeedView = useCallback((next: FeedView) => {
     setFeedView(next);
     rememberFeedView(next);
+    trackFeedViewChanged({ view: next });
   }, []);
 
   useEffect(() => {
@@ -388,6 +417,36 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     };
   }, [prefsHydrated, mode, area, sources, topics, date, timeZone, refreshKey]);
 
+  // Fire once per successful fetch (when loading flips false), not on view toggles.
+  const wasFeedLoading = useRef(false);
+  useEffect(() => {
+    if (loading) {
+      wasFeedLoading.current = true;
+      return;
+    }
+    if (!prefsHydrated || !wasFeedLoading.current) return;
+    wasFeedLoading.current = false;
+    trackFeedLoaded({
+      city,
+      mode,
+      area,
+      card_count: cards.length,
+      topics,
+      sources,
+      view: feedView,
+    });
+  }, [
+    prefsHydrated,
+    loading,
+    city,
+    mode,
+    area,
+    cards.length,
+    topics,
+    sources,
+    feedView,
+  ]);
+
   const movies = cards.filter((c) => c.kind === "movie_showtime");
   const events = cards.filter((c) => c.kind === "event");
 
@@ -443,6 +502,10 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     return MODE_LABELS[mode];
   })();
 
+  // Keep prior cards visible while filters refetch, but mark them stale so the
+  // active chip and feed content don't feel out of sync (esp. on mobile).
+  const isRefreshing = loading && cards.length > 0;
+
   return (
     <div className={`feed-layout ${selection ? "has-detail" : ""}`}>
       <div className="feed-main">
@@ -471,6 +534,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                   className={`chip ${area === id ? "active" : ""}`}
                   onClick={() => {
                     setArea(id);
+                    trackFeedAreaChanged({ area: id, city });
                     syncUrl(mode, id, sources, date);
                   }}
                 >
@@ -507,12 +571,17 @@ function CityFeedCity({ city }: { city: FeedCity }) {
             />
           )}
 
-          <nav className="nav nav--topics" aria-label="Topics">
+          <nav
+            className={`nav nav--topics${isRefreshing ? " is-busy" : ""}`}
+            aria-label="Topics"
+            aria-busy={isRefreshing}
+          >
             <button
               type="button"
               className={`chip ${topics.length === 0 ? "active" : ""}`}
               onClick={() => {
                 setTopics([]);
+                trackFeedTopicChanged({ topics: [], city, surface: "feed" });
                 syncUrl(mode, area, sources, date, selection, []);
               }}
             >
@@ -526,6 +595,11 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                 onClick={() => {
                   const next = toggleTopic(topics, id);
                   setTopics(next);
+                  trackFeedTopicChanged({
+                    topics: next,
+                    city,
+                    surface: "feed",
+                  });
                   // Topics replace source browsing — avoid empty AND intersection
                   setSources([]);
                   syncUrl(mode, area, [], date, selection, next);
@@ -542,6 +616,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
             selected={sources}
             onChange={(next) => {
               setSources(next);
+              trackFeedSourcesChanged({ sources: next, city });
               syncUrl(mode, area, next, date);
             }}
           />
@@ -558,7 +633,21 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         )}
 
         {!error && (!loading || cards.length > 0) && (
-          <>
+          <div className="feed-results-shell">
+            {isRefreshing && (
+              <p
+                className="feed-refresh-status"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="feed-refresh-status__spinner" aria-hidden />
+                {feedRefreshPhrase(area, topics)}
+              </p>
+            )}
+            <div
+              className={`feed-results${isRefreshing ? " is-refreshing" : ""}`}
+              aria-busy={isRefreshing}
+            >
             {movies.length > 0 &&
               (mode === "for_you" || (mode === "weekend" && !date)) && (
               <MoviesSection
@@ -652,7 +741,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                 Refresh feed
               </button>
             </p>
-          </>
+            </div>
+          </div>
         )}
       </div>
 

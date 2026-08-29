@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import { SiteHeader } from "@/components/SiteHeader";
 import "./globals.css";
 
@@ -15,10 +16,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div className="shell">
-          <SiteHeader />
-          {children}
-        </div>
+        <AnalyticsProvider>
+          <div className="shell">
+            <SiteHeader />
+            {children}
+          </div>
+        </AnalyticsProvider>
       </body>
     </html>
   );

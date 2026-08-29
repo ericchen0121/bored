@@ -8,6 +8,7 @@ import {
   RottenTomatoesLogo,
 } from "@/components/FilmRatingBadges";
 import { showtimeOutboundHref } from "@/lib/outbound";
+import { trackCtaClicked } from "@/lib/analytics";
 
 function reviewSourceMeta(r: FilmReview): string {
   const parts: string[] = [];
@@ -223,6 +224,13 @@ export function MovieDetailContent({
                 href={showtimeOutboundHref(s.id)}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() =>
+                  trackCtaClicked({
+                    kind: "showtime",
+                    id: s.id,
+                    slot: "tickets",
+                  })
+                }
               >
                 Tickets
               </a>

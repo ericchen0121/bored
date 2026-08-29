@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { trackDetailOpened } from "@/lib/analytics";
 import { FeedBackLink } from "@/components/FeedBackLink";
 import { MovieDetailContent } from "@/components/detail/MovieDetailContent";
 import type { FilmDetail } from "@/components/detail/types";
@@ -14,7 +15,14 @@ export default function MovieDetailPage() {
 
   useEffect(() => {
     void api<FilmDetail>(`/v1/movies/${params.id}`)
-      .then(setData)
+      .then((film) => {
+        setData(film);
+        trackDetailOpened({
+          kind: "movie",
+          id: params.id,
+          surface: "standalone",
+        });
+      })
       .catch((err: Error) => setError(err.message));
   }, [params.id]);
 

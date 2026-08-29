@@ -13,6 +13,7 @@ import {
 } from "@bored/shared";
 import { CitySelectMenu } from "@/components/CitySelectMenu";
 import { api } from "@/lib/api";
+import { trackCitySwitched, trackTastesOpened } from "@/lib/analytics";
 import {
   feedHomeHref,
   isFeedCity,
@@ -53,6 +54,11 @@ export function SiteHeader() {
     const currentArea = prefs?.area ?? defaultAreaForCity(city);
     if (nextCity === city && nextArea === currentArea) return;
 
+    trackCitySwitched({
+      from_city: city,
+      to_city: nextCity,
+      to_area: nextArea,
+    });
     const allowed = new Set(feedFilterSourcesForCity(nextCity));
     const sources = (prefs?.sources ?? []).filter((s) => allowed.has(s));
     const mode = prefs?.mode ?? "for_you";
@@ -87,7 +93,13 @@ export function SiteHeader() {
           onSelectCity={switchCity}
           onSelectArea={switchArea}
         />
-        <Link href="/onboarding" className="site-header__tastes">
+        <Link
+          href="/onboarding"
+          className="site-header__tastes"
+          onClick={() =>
+            trackTastesOpened({ onboarding_complete: onboardingComplete })
+          }
+        >
           {onboardingComplete ? "Edit tastes" : "Set tastes"}
         </Link>
       </div>

@@ -45,6 +45,7 @@ import {
   googleMapsLink,
 } from "@/lib/event-location";
 import { eventOutboundHref } from "@/lib/outbound";
+import { trackCtaClicked } from "@/lib/analytics";
 import { ListenPlatformIcon } from "./ListenPlatformIcon";
 import { InstagramReelEmbed } from "./InstagramReelEmbed";
 import type { EventDetail } from "./types";
@@ -708,6 +709,14 @@ export function EventDetailContent({
                 href={primaryHref}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() =>
+                  trackCtaClicked({
+                    kind: "event",
+                    id: event.id,
+                    slot: "primary",
+                    source: event.source,
+                  })
+                }
               >
                 {primaryCtaLabel}
               </a>
@@ -718,6 +727,14 @@ export function EventDetailContent({
                 href={secondaryHref}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() =>
+                  trackCtaClicked({
+                    kind: "event",
+                    id: event.id,
+                    slot: "secondary",
+                    source: event.source,
+                  })
+                }
               >
                 {secondaryCtaLabel}
               </a>

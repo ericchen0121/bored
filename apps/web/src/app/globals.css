@@ -514,8 +514,8 @@ select {
 }
 
 .nav--topics {
-  flex-wrap: wrap;
-  overflow-x: visible;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   margin-top: 10px;
   margin-bottom: 4px;
   padding-top: 2px;
@@ -526,6 +526,106 @@ select {
   flex-shrink: 0;
   font-size: 0.86rem;
   padding: 7px 12px;
+}
+
+/* Soft pulse on the selected topic while the feed catches up */
+.nav--topics.is-busy .chip.active {
+  animation: chipPending 1.2s ease-in-out infinite;
+}
+
+@keyframes chipPending {
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Compact status between filters and stale results (Apple-style refresh) */
+.feed-results-shell {
+  position: relative;
+}
+
+.feed-refresh-status {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 14px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin-inline: auto;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--cream);
+  letter-spacing: 0.01em;
+  background: rgba(18, 28, 38, 0.82);
+  border: 1px solid rgba(245, 240, 232, 0.14);
+  border-radius: 999px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  animation: feedRefreshIn 220ms ease both;
+}
+
+.feed-refresh-status__spinner {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid rgba(245, 240, 232, 0.2);
+  border-top-color: rgba(245, 240, 232, 0.9);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: feedRefreshSpin 0.65s linear infinite;
+}
+
+.feed-results {
+  transition: opacity 240ms ease, filter 240ms ease;
+}
+
+.feed-results.is-refreshing {
+  opacity: 0.36;
+  filter: saturate(0.55);
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes feedRefreshIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes feedRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav--topics.is-busy .chip.active,
+  .feed-refresh-status,
+  .feed-refresh-status__spinner {
+    animation: none;
+  }
+
+  .feed-results {
+    transition: none;
+  }
+
+  .feed-results.is-refreshing {
+    opacity: 0.5;
+    filter: none;
+  }
 }
 
 /* Compact source filter — secondary to topics */
@@ -2915,8 +3015,8 @@ select {
   }
 
   .feed-filters .nav--topics {
-    flex-wrap: wrap;
-    overflow-x: visible;
+    flex-wrap: nowrap;
+    overflow-x: auto;
   }
 
   .feed-layout .feed-grid {
