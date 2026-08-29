@@ -48,14 +48,19 @@ const SHEET_SNAP_UP = 0.72;
 /** px/ms — fling thresholds for snap decisions */
 const SHEET_FLING = 0.55;
 
-function sheetTranslateY(visibleFrac: number): number {
+/** Sheet grows from the bottom — height matches visible fraction so list scroll works at mid. */
+function sheetHeightPx(visibleFrac: number): number {
   if (typeof window === "undefined") return 0;
-  return Math.max(0, (SHEET_MAX - visibleFrac) * window.innerHeight);
+  return Math.max(0, visibleFrac * window.innerHeight);
 }
 
-function sheetVisibleFrac(translateY: number): number {
+function sheetVisibleFracFromHeight(heightPx: number): number {
   if (typeof window === "undefined") return SHEET_MID;
-  return SHEET_MAX - translateY / window.innerHeight;
+  return heightPx / window.innerHeight;
+}
+
+function sheetHeightCss(visibleFrac: number): string {
+  return `${visibleFrac * 100}dvh`;
 }
 
 /** Ignore swipes that begin near the screen edge (browser back/forward). */
@@ -599,7 +604,7 @@ function MapEventPanel({
   const dragRef = useRef<{
     pointerId: number;
     startY: number;
-    startTranslate: number;
+    startHeight: number;
     lastY: number;
     lastT: number;
     velocity: number;
@@ -622,12 +627,12 @@ function MapEventPanel({
     return () => window.clearTimeout(t);
   }, [selection]);
 
-  // Keep DOM transform in sync when React snaps (not while dragging).
+  // Keep DOM height in sync when React snaps (not while dragging).
   useEffect(() => {
     if (variant !== "sheet" || dragging) return;
     const el = sheetElRef.current;
     if (!el) return;
-    el.style.transform = `translate3d(0, ${sheetTranslateY(sheetFraction)}px, 0)`;
+    el.style.height = sheetHeightCss(sheetFraction);
   }, [sheetFraction, variant, dragging]);
 
   const listAnimateKey = useMemo(
@@ -642,21 +647,21 @@ function MapEventPanel({
         ? (cards.find((c) => cardMatchesSelection(c, selection))?.id ?? null)
         : null;
 
-  const applyTranslate = (translateY: number) => {
+  const applyHeight = (heightPx: number) => {
     const el = sheetElRef.current;
     if (!el) return;
-    el.style.transform = `translate3d(0, ${translateY}px, 0)`;
+    el.style.height = `${heightPx}px`;
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (variant !== "sheet" || !onSheetFractionChange) return;
     if ((e.target as HTMLElement).closest("button")) return;
 
-    const startTranslate = sheetTranslateY(sheetFraction);
+    const startHeight = sheetHeightPx(sheetFraction);
     dragRef.current = {
       pointerId: e.pointerId,
       startY: e.clientY,
-      startTranslate,
+      startHeight,
       lastY: e.clientY,
       lastT: performance.now(),
       velocity: 0,
@@ -679,17 +684,19 @@ function MapEventPanel({
     drag.lastT = now;
 
     const dy = e.clientY - drag.startY;
-    const maxTranslate = SHEET_MAX * window.innerHeight;
-    const nextTranslate = Math.min(
-      maxTranslate,
-      Math.max(0, drag.startTranslate + dy),
+    const maxHeight = SHEET_MAX * window.innerHeight;
+    const minHeight = 0.08 * window.innerHeight;
+    // Drag down → shorter sheet; drag up → taller.
+    const nextHeight = Math.min(
+      maxHeight,
+      Math.max(minHeight, drag.startHeight - dy),
     );
     const nextFrac = Math.min(
       SHEET_MAX,
-      Math.max(0.08, sheetVisibleFrac(nextTranslate)),
+      Math.max(0.08, sheetVisibleFracFromHeight(nextHeight)),
     );
     drag.lastFrac = nextFrac;
-    applyTranslate(nextTranslate);
+    applyHeight(nextHeight);
   };
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -742,9 +749,7 @@ function MapEventPanel({
       className={shellClass}
       style={
         variant === "sheet"
-          ? ({
-              transform: `translate3d(0, ${sheetTranslateY(sheetFraction)}px, 0)`,
-            } as const)
+          ? ({ height: sheetHeightCss(sheetFraction) } as const)
           : undefined
       }
       aria-modal={variant === "sheet" ? true : undefined}

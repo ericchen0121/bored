@@ -133,13 +133,10 @@ select {
 .site-header__brand {
   display: inline-flex;
   align-items: center;
-  height: 32px;
   font-family: var(--font-display);
   font-size: 1.65rem;
   letter-spacing: -0.03em;
   line-height: 1;
-  /* Fraunces ink sits low in the em-box — nudge to visual center */
-  transform: translateY(-10px);
   color: var(--cream);
   text-decoration: none;
 }
@@ -153,8 +150,6 @@ select {
   align-items: center;
   gap: 14px;
   flex-shrink: 0;
-  height: 32px;
-  transform: translateY(-6px);
 }
 
 .site-header__tastes {
@@ -3679,7 +3674,8 @@ select {
   z-index: 5;
   display: flex;
   flex-direction: column;
-  height: 92dvh;
+  /* Height set inline from snap fraction so mid-open list can scroll fully. */
+  height: 50dvh;
   max-height: 92dvh;
   min-height: 0;
   border-radius: 16px 16px 0 0;
@@ -3689,9 +3685,8 @@ select {
   box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   touch-action: none;
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: height;
+  transition: height 320ms cubic-bezier(0.32, 0.72, 0, 1);
   animation: mapSheetRise 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
@@ -3828,6 +3823,15 @@ select {
   pointer-events: none;
 }
 
+/* Mobile sheet: list ↔ detail should rise/fade, not slide sideways. */
+.map-sheet .map-sidebar__layer--list.is-behind {
+  transform: translate3d(0, 10px, 0) scale(0.985);
+}
+
+.map-sheet .map-sidebar__layer--detail.is-behind {
+  transform: translate3d(0, 14%, 0);
+}
+
 .map-sidebar__layer--detail .map-sidebar__detail {
   height: 100%;
 }
@@ -3913,9 +3917,11 @@ select {
 .map-sidebar__list {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 8px 0 16px;
   overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .map-sidebar__list--in .map-sidebar__day-heading,
@@ -3992,12 +3998,15 @@ select {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.map-sidebar__event:hover {
-  transform: translateX(2px);
-}
+/* Desktop-only nudge — sticky :hover on touch made rows look draggable sideways. */
+@media (hover: hover) and (pointer: fine) {
+  .map-sidebar__event:hover {
+    transform: translateX(2px);
+  }
 
-.map-sidebar__event:hover .timeline-row__thumb {
-  transform: scale(1.04);
+  .map-sidebar__event:hover .timeline-row__thumb {
+    transform: scale(1.04);
+  }
 }
 
 .map-sidebar__event.is-selected {
@@ -4124,6 +4133,15 @@ select {
   animation: mapDetailSwapBack 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Mobile sheet: keep detail swaps vertical so content never drifts sideways. */
+.map-sheet .map-sidebar__detail-scroll--swap-forward {
+  animation-name: mapSheetDetailSwapForward;
+}
+
+.map-sheet .map-sidebar__detail-scroll--swap-back {
+  animation-name: mapSheetDetailSwapBack;
+}
+
 @keyframes mapListItemIn {
   from {
     opacity: 0;
@@ -4150,6 +4168,28 @@ select {
   from {
     opacity: 0;
     transform: translate3d(-18px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mapSheetDetailSwapForward {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mapSheetDetailSwapBack {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
   }
   to {
     opacity: 1;
