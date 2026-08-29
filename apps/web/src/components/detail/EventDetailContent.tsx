@@ -30,7 +30,6 @@ import {
   registrationStatusLabel,
   resolveEventOutboundDestinations,
   resolveSportsTeamRows,
-  sourceLabel,
   stripInfatuationRatingTitle,
 } from "@bored/shared";
 import { artistListenLinks } from "@/lib/artist-listen";
@@ -206,47 +205,15 @@ export function EventDetailContent({
     ? eventOutboundHref(event.id, "secondary")
     : null;
 
-  const primaryCtaLabel =
-    event.source === "luma"
-      ? event.registrationStatus === "sold_out"
-        ? "View on Luma"
-        : event.registrationStatus === "waitlist"
-          ? "Join waitlist"
-          : "Register"
-      : event.source === "partiful"
-        ? "View on Partiful"
-        : event.source === "food" || event.source === "food_deals"
-          ? "Read review"
-          : event.source === "activities"
-            ? "Learn more"
-            : event.source === "instagram"
-            ? event.rawPayload?.mediaType === "REELS"
-              ? "Watch reel"
-              : "View on Instagram"
-            : event.source === "ra"
-            ? "View on RA"
-            : sports &&
-                (event.source === "ticketmaster" ||
-                  /ticketmaster\.|livenation\./i.test(primaryUrl ?? ""))
-              ? "Get tickets"
-              : event.source === "funcheap" &&
-                  primaryUrl &&
-                  !/funcheap\.com/i.test(primaryUrl)
-                ? "Event details"
-                : event.source === "do312" && eventDetailsUrl
-                  ? "Event website"
-                  : event.source === "do312"
-                    ? "View on Do312"
-                    : event.source === "ticketmaster"
-                      ? "View on Ticketmaster"
-                      : "Open source";
-
-  const secondaryCtaLabel =
-    event.source === "do312"
-      ? "View on Do312"
-      : event.source === "funcheap"
-        ? "View on Funcheap"
-        : "View listing";
+  const primaryCtaLabel = eventPrimaryCtaLabel({
+    source: event.source,
+    registrationStatus: event.registrationStatus,
+    primaryUrl,
+    eventDetailsUrl,
+    sports,
+    isReel: event.rawPayload?.mediaType === "REELS",
+  });
+  const secondaryCtaLabel = "Listing";
 
   const priceLine = formatDetailPrice(event);
   const author = event.rawPayload?.author?.trim() || null;
@@ -411,15 +378,16 @@ export function EventDetailContent({
 
   return (
     <div className={`detail-body ${compact ? "is-compact" : ""}`}>
-      <div className="detail-body__meta-row">
-        <span className="badge source">{sourceLabel(event.source)}</span>
-        {showSponsored && <span className="badge sponsored">Sponsored</span>}
-        {infatuationRating != null && (
-          <span className="badge rating-infatuation">
-            Infatuation {Number(infatuationRating).toFixed(1)}
-          </span>
-        )}
-      </div>
+      {(showSponsored || infatuationRating != null) && (
+        <div className="detail-body__meta-row">
+          {showSponsored && <span className="badge sponsored">Sponsored</span>}
+          {infatuationRating != null && (
+            <span className="badge rating-infatuation">
+              Infatuation {Number(infatuationRating).toFixed(1)}
+            </span>
+          )}
+        </div>
+      )}
 
       <header className="detail-body__header">
         <p className="eyebrow">
@@ -701,7 +669,7 @@ export function EventDetailContent({
         {(primaryHref || secondaryHref) && (
           <p
             className="detail-body__actions"
-            style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}
+            style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}
           >
             {primaryHref && (
               <a
@@ -723,7 +691,7 @@ export function EventDetailContent({
             )}
             {secondaryHref && (
               <a
-                className="btn"
+                className="detail-body__listing-link"
                 href={secondaryHref}
                 target="_blank"
                 rel="noreferrer"
@@ -778,6 +746,50 @@ function resolveLineupArtists(event: EventDetail): string[] {
   if (fromPayload.length) return fromPayload.map((a) => a.trim());
 
   return parseLineupArtists(event.title);
+}
+
+function eventPrimaryCtaLabel({
+  source,
+  registrationStatus,
+  primaryUrl,
+  eventDetailsUrl,
+  sports,
+  isReel,
+}: {
+  source: string;
+  registrationStatus: string | null | undefined;
+  primaryUrl: string | null;
+  eventDetailsUrl: string | null;
+  sports: boolean;
+  isReel: boolean;
+}): string {
+  if (source === "luma") {
+    if (registrationStatus === "sold_out") return "View event";
+    if (registrationStatus === "waitlist") return "Join waitlist";
+    return "Register";
+  }
+  if (source === "partiful") return "Register";
+  if (source === "food" || source === "food_deals") return "Read review";
+  if (source === "activities") return "Learn more";
+  if (source === "instagram") return isReel ? "Watch reel" : "View on Instagram";
+  if (source === "ra") return "Get tickets";
+  if (
+    sports &&
+    (source === "ticketmaster" ||
+      /ticketmaster\.|livenation\./i.test(primaryUrl ?? ""))
+  ) {
+    return "Get tickets";
+  }
+  if (source === "ticketmaster") return "Get tickets";
+  if (source === "do312" && eventDetailsUrl) return "Event website";
+  if (
+    source === "funcheap" &&
+    primaryUrl &&
+    !/funcheap\.com/i.test(primaryUrl)
+  ) {
+    return "Event details";
+  }
+  return "Event details";
 }
 
 function stripTrailingByline(description: string): string {

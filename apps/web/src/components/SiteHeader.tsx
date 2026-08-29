@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type MouseEvent } from "react";
 import {
   defaultAreaForCity,
-  feedFilterSourcesForCity,
   feedModeAllowsDate,
   metroFromArea,
   type FeedArea,
@@ -59,14 +58,12 @@ export function SiteHeader() {
       to_city: nextCity,
       to_area: nextArea,
     });
-    const allowed = new Set(feedFilterSourcesForCity(nextCity));
-    const sources = (prefs?.sources ?? []).filter((s) => allowed.has(s));
     const mode = prefs?.mode ?? "for_you";
     const topics = prefs?.topics ?? [];
     const date =
       prefs && feedModeAllowsDate(prefs.mode) ? (prefs.date ?? null) : null;
-    rememberFeedPrefs(mode, nextArea, sources, date, topics);
-    router.push(feedHomeHref(mode, nextArea, sources, date, topics));
+    rememberFeedPrefs(mode, nextArea, [], date, topics);
+    router.push(feedHomeHref(mode, nextArea, [], date, topics));
   }
 
   function switchCity(nextCity: FeedCity) {

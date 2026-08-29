@@ -39,7 +39,7 @@ All three app services build from the **repo root** `Dockerfile`.
 | Dockerfile | `Dockerfile` | `Dockerfile` | `Dockerfile` |
 | `SERVICE` | `api` | `web` | `ingest` |
 | Health check | `/health` | `/` (or none) | none |
-| Build args | — | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `NEXT_PUBLIC_POSTHOG_*` | `INSTALL_PLAYWRIGHT=1` if flyer scrape needed |
+| Build args | — | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `NEXT_PUBLIC_POSTHOG_*` | `INSTALL_PLAYWRIGHT=1` if flyer scrape needed |
 
 ### Variables
 
@@ -59,6 +59,7 @@ All three app services build from the **repo root** `Dockerfile`.
 | `BROWSER_IMAGE_SCRAPE` | ingest | `0` until Chromium installed (`INSTALL_PLAYWRIGHT=1`) |
 | `INGEST_RUN_ON_BOOT` | ingest | Set `1` to run Phase 1 once when the worker starts |
 | `NEXT_PUBLIC_API_URL` | web (**build**) | Public API URL, e.g. `https://api-….up.railway.app` |
+| `NEXT_PUBLIC_SITE_URL` | web (**build**) | Public web origin for OG/share cards, e.g. `https://bored-app.up.railway.app` |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | web (**build**) | Map page |
 | `NEXT_PUBLIC_POSTHOG_KEY` | web (**build**) | Product analytics (optional) |
 | `NEXT_PUBLIC_POSTHOG_HOST` | web (**build**) | PostHog host; default `https://us.i.posthog.com` |
@@ -71,6 +72,7 @@ After web and api have public domains, set:
 railway variables --service api --set "WEB_ORIGIN=https://bored-app.up.railway.app"
 # Rebuild web with the real API URL as a Docker build-arg / Railway variable
 railway variables --service web --set "NEXT_PUBLIC_API_URL=https://bored-api.up.railway.app"
+railway variables --service web --set "NEXT_PUBLIC_SITE_URL=https://bored-app.up.railway.app"
 ```
 
 Current production hosts (Railway-provided; `bored` was taken):

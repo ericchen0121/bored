@@ -14,7 +14,6 @@ import {
   isNewRestaurantRecommendationSource,
   newRestaurantTipFallbackLabel,
   registrationStatusLabel,
-  sourceLabel,
 } from "@bored/shared";
 import { formatTime, groupCardsByDay } from "@/lib/datetime";
 import { cardEventType } from "@/lib/evergreen-poster";
@@ -47,11 +46,6 @@ function TimelineRow({
     card.kind === "event"
       ? eventScanTagsForDisplay(card.categories, card.tags, 2)
       : [];
-  const provenance =
-    card.source &&
-    (card.kind === "event" || card.source === "indie_theater")
-      ? sourceLabel(card.source)
-      : null;
   const regLabel =
     card.kind === "event"
       ? registrationStatusLabel(card.registrationStatus)
@@ -139,7 +133,7 @@ function TimelineRow({
               {card.isFree ? "Free" : ""}
             </p>
           )}
-          {(scanTags.length > 0 || provenance || showReg) && (
+          {(scanTags.length > 0 || showReg) && (
             <div className="tags">
               {showReg && (
                 <span
@@ -153,11 +147,6 @@ function TimelineRow({
                   {t.label}
                 </span>
               ))}
-              {provenance && (
-                <span className="badge source" title="Listing source">
-                  {provenance}
-                </span>
-              )}
             </div>
           )}
           {!textOnly && card.ratings?.infatuation != null && (

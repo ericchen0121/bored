@@ -15,7 +15,6 @@ import {
   movieGenresForDisplay,
   newRestaurantTipFallbackLabel,
   registrationStatusLabel,
-  sourceLabel,
 } from "@bored/shared";
 import { formatDayOnly, formatTime, formatWhen } from "@/lib/datetime";
 import { cardEventType, posterPlaceholderLabel } from "@/lib/evergreen-poster";
@@ -72,11 +71,6 @@ export function FeedCardView({
     : isActivityTip
       ? activityTipFallbackLabel(card.recommendationLabel)
       : foodTipFallbackLabel(card.recommendationLabel);
-  const provenance =
-    card.source &&
-    (card.kind === "event" || card.source === "indie_theater")
-      ? sourceLabel(card.source)
-      : null;
   const regLabel =
     card.kind === "event"
       ? registrationStatusLabel(card.registrationStatus)
@@ -186,7 +180,7 @@ export function FeedCardView({
         placeholderLabel={posterPlaceholderLabel(card)}
         isVideo={isIgReel}
       />
-      <div>
+      <div className="card__body">
         <h3>{card.title}</h3>
         <div className="meta">
           {live && !isEvergreenTip ? (
@@ -221,7 +215,7 @@ export function FeedCardView({
           )}
           {card.isFree ? " · Free" : ""}
         </div>
-        {(tags.length > 0 || provenance || showReg) && (
+        {(tags.length > 0 || showReg) && (
           <div className="tags">
             {showReg && (
               <span
@@ -244,11 +238,6 @@ export function FeedCardView({
                 {t.label}
               </span>
             ))}
-            {provenance && (
-              <span className="badge source" title="Listing source">
-                {provenance}
-              </span>
-            )}
           </div>
         )}
         {card.ratings && (

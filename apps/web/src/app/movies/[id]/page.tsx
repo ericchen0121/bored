@@ -1,40 +1,40 @@
-"use client";
+import type { Metadata } from "next";
+import { MovieDetailClient } from "./MovieDetailClient";
+import { fetchMovieForShare, shareDescription } from "@/lib/og-assets";
 
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { trackDetailOpened } from "@/lib/analytics";
-import { FeedBackLink } from "@/components/FeedBackLink";
-import { MovieDetailContent } from "@/components/detail/MovieDetailContent";
-import type { FilmDetail } from "@/components/detail/types";
+type Props = { params: Promise<{ id: string }> };
 
-export default function MovieDetailPage() {
-  const params = useParams<{ id: string }>();
-  const [data, setData] = useState<FilmDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { id } = await params;
+  const data = await fetchMovieForShare(id);
+  const film = data?.film;
+  if (!film) {
+    return { title: "Movie — Bored" };
+  }
 
-  useEffect(() => {
-    void api<FilmDetail>(`/v1/movies/${params.id}`)
-      .then((film) => {
-        setData(film);
-        trackDetailOpened({
-          kind: "movie",
-          id: params.id,
-          surface: "standalone",
-        });
-      })
-      .catch((err: Error) => setError(err.message));
-  }, [params.id]);
+  const fallback =
+    [film.year, film.genres?.slice(0, 2).join(", ")].filter(Boolean).join(" · ") ||
+    "Now playing nearby";
+  const description = shareDescription(film.synopsis, fallback);
 
-  if (error) return <p className="muted">{error}</p>;
-  if (!data) return <p className="muted">Loading…</p>;
+  return {
+    title: `${film.title} — Bored`,
+    description,
+    openGraph: {
+      title: film.title,
+      description,
+      type: "website",
+      siteName: "Bored",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: film.title,
+      description,
+    },
+  };
+}
 
-  return (
-    <>
-      <div className="topbar">
-        <FeedBackLink />
-      </div>
-      <MovieDetailContent data={data} />
-    </>
-  );
+export default async function MovieDetailPage({ params }: Props) {
+  const { id } = await params;
+  return <MovieDetailClient id={id} />;
 }

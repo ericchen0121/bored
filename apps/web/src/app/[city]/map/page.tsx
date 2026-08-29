@@ -144,7 +144,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
       rememberFeedPrefs(
         nextMode,
         nextArea,
-        nextSources,
+        [],
         resolvedDate,
         nextTopics,
       );
@@ -186,16 +186,16 @@ function CityMapPage({ city }: { city: FeedCity }) {
         : stored.area === "sf" || stored.area === "bay"
           ? stored.area
           : areaFromCityPath(city, null);
-      // Map always opens on Today; keep area / sources / topics from prefs.
+      // Map always opens on Today; keep area / topics from prefs.
+      // Sources stay URL-only for QA — never restore from prefs.
       setMode("today");
       setArea(nextArea);
-      setSources(stored.sources);
       setTopics(stored.topics);
       setDate(today);
       syncUrl(
         "today",
         nextArea,
-        stored.sources,
+        sources,
         today,
         selectionFromParams(searchParams),
         stored.topics,

@@ -15,7 +15,6 @@ import {
   isHappeningNow,
   primaryEventType,
   registrationStatusLabel,
-  sourceLabel,
 } from "@bored/shared";
 import { api } from "@/lib/api";
 import { formatDayHeading, formatTime, groupCardsByDay } from "@/lib/datetime";
@@ -264,11 +263,6 @@ function MapSidebarList({
                 card.kind === "event"
                   ? eventScanTagsForDisplay(card.categories, card.tags, 2)
                   : [];
-              const provenance =
-                card.source &&
-                (card.kind === "event" || card.source === "indie_theater")
-                  ? sourceLabel(card.source)
-                  : null;
               const regLabel =
                 card.kind === "event"
                   ? registrationStatusLabel(card.registrationStatus)
@@ -317,7 +311,7 @@ function MapSidebarList({
                           {card.isFree ? "Free" : ""}
                         </span>
                       )}
-                      {(tags.length > 0 || provenance || showReg) && (
+                      {(tags.length > 0 || showReg) && (
                         <div className="tags">
                           {showReg && (
                             <span
@@ -331,11 +325,6 @@ function MapSidebarList({
                               {t.label}
                             </span>
                           ))}
-                          {provenance && (
-                            <span className="badge source" title="Listing source">
-                              {provenance}
-                            </span>
-                          )}
                         </div>
                       )}
                       {card.ratings?.infatuation != null && (

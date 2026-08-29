@@ -1,40 +1,42 @@
-"use client";
+import type { Metadata } from "next";
+import { EventDetailClient } from "./EventDetailClient";
+import { fetchEventForShare, shareDescription } from "@/lib/og-assets";
+import { formatWhen } from "@/lib/datetime";
 
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { trackDetailOpened } from "@/lib/analytics";
-import { FeedBackLink } from "@/components/FeedBackLink";
-import { EventDetailContent } from "@/components/detail/EventDetailContent";
-import type { EventDetail } from "@/components/detail/types";
+type Props = { params: Promise<{ id: string }> };
 
-export default function EventDetailPage() {
-  const params = useParams<{ id: string }>();
-  const [event, setEvent] = useState<EventDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { id } = await params;
+  const event = await fetchEventForShare(id);
+  if (!event) {
+    return { title: "Event — Bored" };
+  }
 
-  useEffect(() => {
-    void api<EventDetail>(`/v1/events/${params.id}`)
-      .then((data) => {
-        setEvent(data);
-        trackDetailOpened({
-          kind: "event",
-          id: params.id,
-          surface: "standalone",
-        });
-      })
-      .catch((err: Error) => setError(err.message));
-  }, [params.id]);
+  const tz = event.timezone || "America/Los_Angeles";
+  const when = formatWhen(event.startsAt, tz);
+  const venue = event.venueName?.trim();
+  const fallback =
+    [venue, when].filter(Boolean).join(" · ") || "Something to do nearby";
+  const description = shareDescription(event.description, fallback);
 
-  if (error) return <p className="muted">{error}</p>;
-  if (!event) return <p className="muted">Loading…</p>;
+  return {
+    title: `${event.title} — Bored`,
+    description,
+    openGraph: {
+      title: event.title,
+      description,
+      type: "website",
+      siteName: "Bored",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: event.title,
+      description,
+    },
+  };
+}
 
-  return (
-    <>
-      <div className="topbar">
-        <FeedBackLink />
-      </div>
-      <EventDetailContent event={event} />
-    </>
-  );
+export default async function EventDetailPage({ params }: Props) {
+  const { id } = await params;
+  return <EventDetailClient id={id} />;
 }

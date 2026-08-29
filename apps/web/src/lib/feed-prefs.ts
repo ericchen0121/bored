@@ -3,7 +3,6 @@ import {
   FEED_CITIES,
   FEED_TOPICS,
   defaultAreaForCity,
-  feedFilterSourcesForCity,
   feedModeAllowsDate,
   metroFromArea,
   normalizeFeedMode,
@@ -95,14 +94,15 @@ export type FeedPrefs = {
 export function rememberFeedPrefs(
   mode: FeedMode,
   area: FeedArea,
-  sources: FeedFilterSource[] = [],
+  _sources: FeedFilterSource[] = [],
   date: string | null = null,
   topics: FeedTopic[] = [],
 ) {
   try {
+    // Sources are QA-only via ?sources= — never persist into session prefs.
     sessionStorage.setItem(
       KEY,
-      JSON.stringify({ mode, area, sources, date, topics }),
+      JSON.stringify({ mode, area, sources: [], date, topics }),
     );
   } catch {
     /* private mode / quota */
@@ -116,17 +116,10 @@ export function readFeedPrefs(): FeedPrefs | null {
     const parsed = JSON.parse(raw) as {
       mode?: string;
       area?: string;
-      sources?: string[] | string;
       topics?: string[] | string;
       date?: string | null;
     };
     const area = parseFeedArea(parsed.area);
-    const allowed = new Set(feedFilterSourcesForCity(metroFromArea(area)));
-    const sources = (
-      Array.isArray(parsed.sources)
-        ? parseFeedSources(parsed.sources.join(","))
-        : parseFeedSources(parsed.sources)
-    ).filter((s) => allowed.has(s));
     const topics = (
       Array.isArray(parsed.topics)
         ? parseFeedTopics(parsed.topics.join(","))
@@ -136,7 +129,7 @@ export function readFeedPrefs(): FeedPrefs | null {
     return {
       mode,
       area,
-      sources,
+      sources: [],
       topics,
       date: feedModeAllowsDate(mode) ? parseFeedDate(parsed.date) : null,
     };
