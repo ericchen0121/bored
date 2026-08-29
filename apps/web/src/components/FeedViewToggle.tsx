@@ -37,8 +37,24 @@ const OPTIONS: {
     ),
   },
   {
-    id: "list",
-    label: "Text list",
+    id: "poster",
+    label: "Poster cards",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+        <rect x="2" y="1.5" width="12" height="13" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path
+          d="M4 11.5h8M4 13.2h5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: "by_time",
+    label: "By time",
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
         <path

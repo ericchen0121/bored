@@ -3,18 +3,24 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @bored/api --filter @bored/web dev",
+    "dev": "bash scripts/dev.sh",
+    "dev:restart": "bash scripts/dev.sh",
+    "dev:mobile": "bash scripts/dev.sh",
     "dev:api": "pnpm --filter @bored/api dev",
     "dev:web": "pnpm --filter @bored/web dev",
     "build": "pnpm -r build",
     "db:generate": "pnpm --filter @bored/db generate",
     "db:migrate": "pnpm --filter @bored/db migrate",
+    "db:baseline": "pnpm --filter @bored/db baseline-migrations",
     "db:push": "pnpm --filter @bored/db push",
     "db:seed": "pnpm --filter @bored/db seed",
     "ingest:once": "pnpm --filter @bored/ingest exec tsx src/cli.ts --once",
     "ingest": "pnpm --filter @bored/ingest exec tsx src/cli.ts --schedule",
-    "typecheck": "pnpm -r typecheck"
+    "ingest:backfill-images": "pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-ticket-images",
+    "typecheck": "pnpm -r typecheck",
+    "railway:setup": "bash scripts/railway-setup.sh"
   },
+  "packageManager": "pnpm@10.28.2",
   "engines": {
     "node": ">=20"
   }

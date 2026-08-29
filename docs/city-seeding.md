@@ -221,9 +221,9 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=recurring,comedy_v
    - `eater_chi`, `theinfatuation` (city-filter captions), `timeoutchicago`, local food influencers
    - Tag rows with `city: "chicago"`
 
-2. **Neighborhoods**
-   - Add `CHI_NEIGHBORHOODS` to `taxonomy.ts` (Wicker Park, Logan Square, Lincoln Park, Pilsen, Hyde Park, …)
-   - Wire onboarding neighborhood picker to metro
+2. **Neighborhoods** ✅
+   - `CHI_NEIGHBORHOODS` + `neighborhoodsForCity()` in `taxonomy.ts`
+   - Onboarding picks chips from the active feed metro — [city-expansion-strategy — Tastes](./city-expansion-strategy.md#tastes--neighborhoods-onboarding)
 
 3. **Demo user profile**
    - Optional second demo user centered on `CHI_DEFAULT`, or metro-aware seed
@@ -240,8 +240,10 @@ When adding city **N**:
 | Step | Action |
 |---|---|
 | 1 | Add `N_DEFAULT` + `N_CITIES` set + `areasForCity('n')` in `taxonomy.ts` |
+| 1b | Add `N_NEIGHBORHOODS` + wire `neighborhoodsForCity` / onboarding — [expansion strategy](./city-expansion-strategy.md#tastes--neighborhoods-onboarding) |
 | 2 | Add `FEED_CITIES` entry + `N_FEED_FILTER_SOURCES` |
 | 3 | Implement or configure Phase 1 adapters (TM, Luma, RA, 19hz, Eventbrite, local cheap calendar) |
+| 3b | **Ticket flyers for text calendars** — reuse `enrichEventsWithTicketImages()`; install Chromium on ingest host; run `--backfill-ticket-images` once — [ingest.md — Ticket-page flyer scrape](./ingest.md#ticket-page-flyer-scrape-multi-city) |
 | 4 | **Category mapping** — each adapter sets `categories[]` per [topic filter contract](./ingest.md#category-mapping-for-topic-filters); port `funcheapTaxonomy` / `mapDo312Categories` patterns for local calendars |
 | 5 | Run Phase 1 ingest; verify `eventInArea('n', …)` isolation |
 | 6 | Port food vertical (config + curated deals) |
@@ -252,14 +254,16 @@ When adding city **N**:
 | 11 | Wire `activities` adapter; set `outdoors` / `arts` categories for topic chips |
 | 12 | **Topic smoke-test** — API checks below for `area=n` |
 | 13 | Update web city selector (already generic if `FEED_CITIES` updated) |
-| 14 | Document adapters in [ingest.md](./ingest.md) |
+| 14 | **City loading phrase** — add a metro-flavored “Gathering the …” line in `apps/web/src/app/[city]/page.tsx` (SF: fog, Chicago: wind; invent one local weather/place cue per city) |
+| 14b | **City hero** — Unsplash cover + party palette + place-specific lede in `apps/web/src/lib/city-heroes.ts` — [expansion strategy — City hero](./city-expansion-strategy.md#city-hero-web) |
+| 15 | Document adapters in [ingest.md](./ingest.md) |
 
 ## Suggested implementation order (Chicago)
 
 ```
 Done:    Phase A (food tips) + Phase B (food deals) + Phase C (comedy recurring + comedy_venue_chi)
 Next:    Phase D (TMS Chicago) + topic smoke tests for Movies
-Later:   Phase E (IG handles, CHI neighborhoods, partiful)
+Later:   Phase E (IG handles, partiful; CHI neighborhoods shipped)
 Parallel: Evergreen activities per city-expansion-strategy.md
 ```
 
@@ -276,6 +280,8 @@ Parallel: Evergreen activities per city-expansion-strategy.md
 | Adapter registry | `packages/ingest/src/runner.ts` |
 | Feed ranking geo | `apps/api/src/index.ts` (`metroFromArea`, radius widening) |
 | Web city selector | `apps/web/src/app/page.tsx`, `apps/web/src/lib/feed-prefs.ts` |
+| Feed loading copy | `apps/web/src/app/[city]/page.tsx` — per-`area` “Gathering the …” (fog / wind / …) |
+| City hero | `apps/web/src/lib/city-heroes.ts`, `CityHero.tsx`, `CityHeroFx.tsx` — [expansion strategy](./city-expansion-strategy.md#city-hero-web) |
 | Detail drawer | `apps/web/src/components/detail/DetailDrawer.tsx`, `LumaMeshBackground.tsx` |
 
 ## Verification matrix

@@ -1,11 +1,12 @@
 import {
   FEED_AREAS,
   FEED_CITIES,
-  FEED_MODES,
   FEED_TOPICS,
   defaultAreaForCity,
   feedFilterSourcesForCity,
+  feedModeAllowsDate,
   metroFromArea,
+  normalizeFeedMode,
   parseFeedDate,
   parseFeedSources,
   parseFeedTopics,
@@ -21,10 +22,11 @@ export type { FeedArea, FeedCity, FeedTopic };
 const KEY = "bored:feed";
 const VIEW_KEY = "bored:feedView";
 
-export const FEED_VIEWS = ["cards", "large", "list"] as const;
+export const FEED_VIEWS = ["cards", "large", "poster", "by_time"] as const;
 export type FeedView = (typeof FEED_VIEWS)[number];
 
 export function parseFeedView(value: string | null | undefined): FeedView {
+  if (value === "list") return "by_time";
   return FEED_VIEWS.includes(value as FeedView)
     ? (value as FeedView)
     : "cards";
@@ -47,9 +49,7 @@ export function readFeedView(): FeedView {
 }
 
 export function parseFeedMode(value: string | null | undefined): FeedMode {
-  return FEED_MODES.includes(value as FeedMode)
-    ? (value as FeedMode)
-    : "for_you";
+  return normalizeFeedMode(value);
 }
 
 export function parseFeedArea(value: string | null | undefined): FeedArea {
@@ -64,12 +64,31 @@ export function parseFeedCity(value: string | null | undefined): FeedCity {
     : metroFromArea(parseFeedArea(value));
 }
 
+/** True when `value` is a known feed city slug. */
+export function isFeedCity(value: string | null | undefined): value is FeedCity {
+  return FEED_CITIES.includes(value as FeedCity);
+}
+
+/**
+ * Resolve API `area` from a city path segment + optional `?area=` query.
+ * Chicago ignores the query; SF defaults to `bay` when omitted.
+ */
+export function areaFromCityPath(
+  city: FeedCity,
+  areaParam: string | null | undefined,
+): FeedArea {
+  if (city === "chicago") return "chicago";
+  if (areaParam === "sf") return "sf";
+  if (areaParam === "bay") return "bay";
+  return defaultAreaForCity(city);
+}
+
 export type FeedPrefs = {
   mode: FeedMode;
   area: FeedArea;
   sources: FeedFilterSource[];
   topics: FeedTopic[];
-  /** Selected calendar day when browsing By time (`YYYY-MM-DD`) */
+  /** Selected calendar day when browsing weekend / Select Date (`YYYY-MM-DD`) */
   date: string | null;
 };
 
@@ -119,24 +138,31 @@ export function readFeedPrefs(): FeedPrefs | null {
       area,
       sources,
       topics,
-      date: mode === "all" ? parseFeedDate(parsed.date) : null,
+      date: feedModeAllowsDate(mode) ? parseFeedDate(parsed.date) : null,
     };
   } catch {
     return null;
   }
 }
 
+/**
+ * Query string for the feed (city lives in the path).
+ * Emits `area` only for SF’s non-default scope (`sf`); omits for `bay` and Chicago.
+ */
 export function feedQueryString(prefs: FeedPrefs): string {
   const params = new URLSearchParams();
   params.set("mode", prefs.mode);
-  params.set("area", prefs.area);
+  const city = metroFromArea(prefs.area);
+  if (city === "sf" && prefs.area === "sf") {
+    params.set("area", "sf");
+  }
   if (prefs.sources.length) {
     params.set("sources", prefs.sources.join(","));
   }
   if (prefs.topics.length) {
     params.set("topics", prefs.topics.join(","));
   }
-  if (prefs.mode === "all" && prefs.date) {
+  if (feedModeAllowsDate(prefs.mode) && prefs.date) {
     params.set("date", prefs.date);
   }
   return params.toString();
@@ -157,5 +183,28 @@ export function feedHomeHref(
     topics: topics ?? stored?.topics ?? [],
     date: date !== undefined ? date : (stored?.date ?? null),
   };
-  return `/?${feedQueryString(prefs)}`;
+  const city = metroFromArea(prefs.area);
+  const q = feedQueryString(prefs);
+  return q ? `/${city}?${q}` : `/${city}`;
+}
+
+/** Map view for a city — same query prefs as the feed. */
+export function feedMapHref(
+  mode?: FeedMode,
+  area?: FeedArea,
+  sources?: FeedFilterSource[],
+  date?: string | null,
+  topics?: FeedTopic[],
+): string {
+  const stored = readFeedPrefs();
+  const prefs: FeedPrefs = {
+    mode: mode ?? stored?.mode ?? "for_you",
+    area: area ?? stored?.area ?? defaultAreaForCity("sf"),
+    sources: sources ?? stored?.sources ?? [],
+    topics: topics ?? stored?.topics ?? [],
+    date: date !== undefined ? date : (stored?.date ?? null),
+  };
+  const city = metroFromArea(prefs.area);
+  const q = feedQueryString(prefs);
+  return q ? `/${city}/map?${q}` : `/${city}/map`;
 }

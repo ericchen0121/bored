@@ -1,4 +1,4 @@
-import { cityKeyFromLabel } from "@bored/shared";
+import { cityKeyFromLabel, partifulFeedImageUrl } from "@bored/shared";
 import {
   contentHash,
   type NormalizedEvent,
@@ -16,12 +16,15 @@ type PartifulLocationInfo = {
   neighborhood?: string | null;
   mapsInfo?: PartifulMapsInfo;
   displayAddressLines?: string[];
+  displayName?: string;
 };
 
 type PartifulImage = {
   source?: string;
   type?: string;
   url?: string;
+  width?: number;
+  height?: number;
   upload?: { path?: string; url?: string };
   gif?: { images?: { original?: { url?: string }; fixed_width?: { url?: string } } };
 };
@@ -39,25 +42,19 @@ type PartifulEvent = {
   hostName?: string | null;
   isPublic?: boolean;
   status?: string;
+  interestedGuestCount?: number;
+  goingGuestCount?: number;
+  approvedGuestCount?: number;
+  maybeGuestCount?: number;
+  showGuestCount?: boolean;
+};
+
+type PartifulFeedItem = {
+  id?: string;
+  event?: PartifulEvent;
 };
 
 const EXPLORE_URLS = ["https://partiful.com/explore/sf"] as const;
-
-/** Feed-sized cover via Partiful's imgix when we have a storage path. */
-export function partifulFeedImageUrl(image: PartifulImage | null | undefined): string | null {
-  if (!image) return null;
-  const path = image.upload?.path?.replace(/^\//, "");
-  if (path) {
-    return `https://partiful.imgix.net/${path}?w=400&h=400&fit=crop&auto=format`;
-  }
-  const raw =
-    image.url ||
-    image.upload?.url ||
-    image.gif?.images?.fixed_width?.url ||
-    image.gif?.images?.original?.url ||
-    null;
-  return raw || null;
-}
 
 function parseApproxCity(approx?: string | null): string {
   if (!approx) return "sf";
@@ -81,14 +78,142 @@ function venueFrom(ev: PartifulEvent): {
         ? ev.location
         : null;
   return {
-    venueName: maps?.name ?? null,
+    venueName: maps?.name ?? ev.locationInfo?.displayName ?? null,
     address,
     neighborhood: ev.locationInfo?.neighborhood ?? null,
     city: parseApproxCity(maps?.approximateLocation),
   };
 }
 
-function toNormalized(ev: PartifulEvent): NormalizedEvent | null {
+/** Partiful explore SSR has no per-event tags — infer from section rails + copy. */
+export function partifulCategoriesAndTags(opts: {
+  title: string;
+  description?: string | null;
+  venueName?: string | null;
+  sections?: string[];
+}): { categories: string[]; tags: string[] } {
+  const text = `${opts.title} ${opts.description ?? ""} ${opts.venueName ?? ""}`.toLowerCase();
+  const sectionBlob = (opts.sections ?? []).join(" ").toLowerCase();
+  const cats = new Set<string>();
+  const tags = new Set<string>(["partiful"]);
+
+  if (/make something|modern renaissance/i.test(sectionBlob)) cats.add("arts");
+  if (/good eats/i.test(sectionBlob)) cats.add("food");
+  if (/markets?\s*&\s*fleas?/i.test(sectionBlob)) {
+    cats.add("arts");
+    tags.add("market");
+  }
+  if (/evenings?\s*&\s*weekends?/i.test(sectionBlob)) {
+    cats.add("nightlife");
+  }
+
+  if (/workshop|class\b|drawing|figure|watercolor|craft|bouquet|florist|candle class|trunk show|art show|gallery|exhibit|make\b/i.test(text)) {
+    cats.add("arts");
+  }
+  if (/pickleball|run club|hike|hiking|paddle|yoga|pilates|field day|stroller walk|walk with friends|walk\b|marathon|corgi|sports|fitness/i.test(text)) {
+    cats.add("outdoors");
+    tags.add("sports");
+  }
+  if (/picnic|park swap|park hangout|dolores|ggp|golden gate park/i.test(text)) {
+    cats.add("outdoors");
+  }
+  if (/matcha|coffee|donuts|wine|brunch|\bfood\b|\beat\b|restaurant|bar crawl|tasting|kitchen|matcha society/i.test(text)) {
+    cats.add("food");
+  }
+  if (/comedy|standup|stand-up|improv|drag show/i.test(text)) {
+    cats.add("comedy.showcase");
+  }
+  if (/dj\b|edm|techno|beats|live at|karaoke|afters|mint glaze|sound of|night\b|rave/i.test(text)) {
+    cats.add("music.live");
+    cats.add("nightlife");
+  }
+  if (/\bparty\b|club night|bar\b|fireworks/i.test(text)) {
+    cats.add("nightlife");
+  }
+  if (/book club|conversation|talk\b|tech week|meetup|networking/i.test(text)) {
+    cats.add("tech");
+  }
+  if (/movie|film|cinema|theater/i.test(text)) {
+    cats.add("movies");
+  }
+  if (/flea market|closet sale|swap|yard sale|vendor|market\b/i.test(text)) {
+    cats.add("arts");
+    tags.add("market");
+  }
+  if (/festival|fest\b/i.test(text)) {
+    cats.add("outdoors");
+    tags.add("festival");
+  }
+
+  // Daytime socials mis-labeled when "Evenings & Weekends" also lists them.
+  if (
+    cats.has("nightlife") &&
+    /workshop|pickleball|class\b|picnic|walk|run club|book club|market|art show|coffee|matcha|donuts|paddle|yoga|pilates|field day|hike/i.test(text)
+  ) {
+    cats.delete("nightlife");
+    cats.delete("music.live");
+  }
+
+  if (cats.size === 0) {
+    // Social discovery default — not nightlife.
+    cats.add("outdoors");
+  }
+
+  return { categories: [...cats], tags: [...tags] };
+}
+
+type PartifulCollected = {
+  event: PartifulEvent;
+  sections: string[];
+};
+
+function collectPartifulFromPage(data: unknown): PartifulCollected[] {
+  const pageProps = (data as { props?: { pageProps?: Record<string, unknown> } })
+    .props?.pageProps;
+  if (!pageProps) return [];
+
+  const byId = new Map<string, PartifulCollected>();
+  const add = (ev: PartifulEvent, sectionTitle: string) => {
+    if (!ev.id || !ev.title?.trim() || !ev.startDate) return;
+    const id = String(ev.id);
+    const cur = byId.get(id) ?? { event: ev, sections: [] };
+    if (!cur.sections.includes(sectionTitle)) cur.sections.push(sectionTitle);
+    byId.set(id, cur);
+  };
+
+  const ingestSection = (
+    section: { title?: string; items?: PartifulFeedItem[] } | null | undefined,
+  ) => {
+    if (!section) return;
+    const title = section.title?.trim() || "Explore";
+    for (const item of section.items ?? []) {
+      if (item.event) add(item.event, title);
+    }
+  };
+
+  ingestSection(
+    pageProps.trendingSection as { title?: string; items?: PartifulFeedItem[] },
+  );
+  for (const section of (pageProps.sections as { title?: string; items?: PartifulFeedItem[] }[]) ?? []) {
+    ingestSection(section);
+  }
+  for (const item of (pageProps.feedItems as PartifulFeedItem[]) ?? []) {
+    if (item.event) add(item.event, "Explore");
+  }
+
+  for (const ev of collectPartifulEvents(data)) {
+    if (!ev.id) continue;
+    const id = String(ev.id);
+    if (!byId.has(id)) byId.set(id, { event: ev, sections: [] });
+  }
+
+  return [...byId.values()];
+}
+
+function toNormalized(
+  ev: PartifulEvent,
+  opts?: { trending?: boolean; sections?: string[] },
+): NormalizedEvent | null {
   const title = ev.title?.trim();
   const start = ev.startDate;
   if (!title || !start) return null;
@@ -105,6 +230,14 @@ function toNormalized(ev: PartifulEvent): NormalizedEvent | null {
 
   const id = String(ev.id ?? contentHash([title, start]));
   const place = venueFrom(ev);
+  const trending = Boolean(opts?.trending);
+  const { categories, tags: inferredTags } = partifulCategoriesAndTags({
+    title,
+    description: ev.description,
+    venueName: place.venueName,
+    sections: opts?.sections,
+  });
+  const tags = trending ? [...inferredTags, "trending"] : inferredTags;
 
   return {
     source: "partiful",
@@ -119,13 +252,33 @@ function toNormalized(ev: PartifulEvent): NormalizedEvent | null {
     neighborhood: place.neighborhood,
     city: place.city,
     isFree: false,
-    categories: ["nightlife"],
-    tags: ["partiful", "party"],
+    categories,
+    tags,
     url: `https://partiful.com/e/${id}`,
     imageUrl: partifulFeedImageUrl(ev.image),
     organizer: ev.hostName ?? null,
-    rawPayload: ev,
+    rawPayload: {
+      ...ev,
+      partifulSections: opts?.sections ?? [],
+      ...(trending ? { partifulTrending: true } : {}),
+    },
   };
+}
+
+/** IDs from Partiful's "Trending in the Bay" (or metro equivalent) carousel. */
+function trendingEventIds(data: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!data || typeof data !== "object") return ids;
+  const pageProps = (data as { props?: { pageProps?: Record<string, unknown> } })
+    .props?.pageProps;
+  const section = pageProps?.trendingSection as
+    | { items?: PartifulFeedItem[] }
+    | undefined;
+  for (const item of section?.items ?? []) {
+    const id = item.event?.id;
+    if (id != null) ids.add(String(id));
+  }
+  return ids;
 }
 
 function collectPartifulEvents(node: unknown, out: PartifulEvent[] = []): PartifulEvent[] {
@@ -170,11 +323,16 @@ async function fetchExplore(url: string): Promise<NormalizedEvent[]> {
   );
   if (!match?.[1]) return [];
   const data = JSON.parse(match[1]) as unknown;
-  const found = collectPartifulEvents(data);
+  const trendingIds = trendingEventIds(data);
+  const found = collectPartifulFromPage(data);
   const out: NormalizedEvent[] = [];
   const seen = new Set<string>();
-  for (const raw of found) {
-    const ev = toNormalized(raw);
+  for (const { event: raw, sections } of found) {
+    const id = raw.id != null ? String(raw.id) : null;
+    const ev = toNormalized(raw, {
+      trending: id != null && trendingIds.has(id),
+      sections,
+    });
     if (!ev || seen.has(ev.sourceEventId)) continue;
     seen.add(ev.sourceEventId);
     out.push(ev);
@@ -195,7 +353,13 @@ export const partifulAdapter: SourceAdapter = {
         console.warn(`[partiful] ${url} failed:`, (err as Error).message);
       }
     }
-    events.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+    // Trending carousel first so the soft cap never drops Partiful's popular picks.
+    events.sort((a, b) => {
+      const aTrend = a.tags?.includes("trending") ? 0 : 1;
+      const bTrend = b.tags?.includes("trending") ? 0 : 1;
+      if (aTrend !== bTrend) return aTrend - bTrend;
+      return a.startsAt.getTime() - b.startsAt.getTime();
+    });
     return { events: events.slice(0, 120) };
   },
 };

@@ -1,5 +1,6 @@
 import { cityKeyFromLabel } from "@bored/shared";
 import { finalizeTicketmasterEvents } from "@bored/shared/coalesce";
+import { createAttractionLinkCache } from "../tmAttractionLinks.js";
 import {
   fetchJson,
   type AdapterFetchResult,
@@ -48,7 +49,7 @@ type TmEvent = {
       address?: { line1?: string };
       location?: { latitude?: string; longitude?: string };
     }[];
-    attractions?: { name?: string }[];
+    attractions?: { id?: string; name?: string; url?: string }[];
   };
 };
 
@@ -132,9 +133,67 @@ function createTicketmasterAdapter(opts: {
         }
         if (batch.length < 100) break;
       }
-      return tmFetchResult(events);
+      const enriched = await enrichSportsAttractionLinks(events, key);
+      return tmFetchResult(enriched);
     },
   };
+}
+
+/** Fill homepage / Instagram / wiki from TM attraction detail (sports only). */
+async function enrichSportsAttractionLinks(
+  events: NormalizedEvent[],
+  apiKey: string,
+): Promise<NormalizedEvent[]> {
+  const cache = createAttractionLinkCache(apiKey);
+  const out: NormalizedEvent[] = [];
+
+  for (const ev of events) {
+    if (!ev.tags?.includes("sports")) {
+      out.push(ev);
+      continue;
+    }
+    const payload =
+      ev.rawPayload && typeof ev.rawPayload === "object"
+        ? ({ ...(ev.rawPayload as Record<string, unknown>) } as Record<
+            string,
+            unknown
+          >)
+        : {};
+    const stubs = Array.isArray(payload.teams)
+      ? payload.teams.filter(
+          (t): t is { name?: string; attractionId?: string } =>
+            Boolean(t) && typeof t === "object",
+        )
+      : [];
+    if (!stubs.length) {
+      out.push(ev);
+      continue;
+    }
+
+    const teams = [];
+    for (const stub of stubs.slice(0, 8)) {
+      const name = typeof stub.name === "string" ? stub.name.trim() : "";
+      const attractionId =
+        typeof stub.attractionId === "string" ? stub.attractionId.trim() : "";
+      if (!name) continue;
+      if (!attractionId) {
+        teams.push({ name, attractionId: null, homepageUrl: null, instagramUrl: null, wikiUrl: null });
+        continue;
+      }
+      teams.push(await cache.resolveTeam(name, attractionId));
+    }
+
+    out.push({
+      ...ev,
+      rawPayload: {
+        ...payload,
+        artists: teams.map((t) => t.name),
+        teams,
+      },
+    });
+  }
+
+  return out;
 }
 
 function normalizeTmEvent(
@@ -175,10 +234,15 @@ function normalizeTmEvent(
     [...(ev.images ?? [])].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]
       ?.url ?? null;
 
-  const artists = (ev._embedded?.attractions ?? [])
-    .map((a) => a.name?.trim())
-    .filter((n): n is string => Boolean(n))
+  const isSports = /sports/i.test(segment);
+  const attractionRows = (ev._embedded?.attractions ?? [])
+    .map((a) => ({
+      name: a.name?.trim() ?? "",
+      attractionId: a.id?.trim() || null,
+    }))
+    .filter((a) => a.name)
     .slice(0, 12);
+  const artists = attractionRows.map((a) => a.name);
 
   return {
     source: COMEDY_VENUE_KEYWORDS.test(venueName)
@@ -201,7 +265,7 @@ function normalizeTmEvent(
     // into categories. Keep genre only when it adds signal beyond the category.
     tags: [
       ...tmGenreTags(genre, categories),
-      ...(/sports/i.test(segment) ? ["sports"] : []),
+      ...(isSports ? ["sports"] : []),
     ],
     url: ev.url ?? null,
     imageUrl: image,
@@ -212,6 +276,18 @@ function normalizeTmEvent(
       venueCity,
       stateCode,
       ...(artists.length ? { artists } : {}),
+      // Sports: stubs enriched later via /attractions/{id} externalLinks.
+      ...(isSports && attractionRows.length
+        ? {
+            teams: attractionRows.map((a) => ({
+              name: a.name,
+              attractionId: a.attractionId,
+              homepageUrl: null,
+              instagramUrl: null,
+              wikiUrl: null,
+            })),
+          }
+        : {}),
     },
   };
 }

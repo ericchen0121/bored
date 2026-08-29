@@ -28,6 +28,16 @@
       "importance": "medium"
     },
     {
+      "description": "Local dev stack",
+      "examples": [
+        "Run one supervised stack: pnpm dev (scripts/dev.sh) — frees :3000/:4000, auto-restarts on crash.",
+        "After .env changes: pnpm dev:restart. Do not spawn multiple dev:api tabs.",
+        "After API/ingest/shared/db changes that need a restart: restart :4000 yourself (kill port, pnpm dev:api, curl /health) — do not ask the user.",
+        "See docs/development.md."
+      ],
+      "importance": "high"
+    },
+    {
       "description": "Git safety",
       "examples": [
         "Don't commit or git add until explicitly asked.",

@@ -2,10 +2,14 @@ import * as cheerio from "cheerio";
 import { db, events as eventsTable } from "@bored/db";
 import {
   enrichCategoriesWithTags,
-  extractRaEventId,
+  extractMusicPlatformRef,
+  MUSIC_TICKET_PLATFORMS,
   parseLineupArtists,
+  type MusicTicketPlatform,
 } from "@bored/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
+import { enrichEventsWithTicketImages } from "../ticketImageEnrich.js";
+import { resolveTicketPageImage } from "../ticketPageImage.js";
 import {
   contentHash,
   fetchText,
@@ -124,45 +128,88 @@ function createNineteenHzAdapter(region: NineteenHzRegion): SourceAdapter {
   };
 }
 
-/** Skip 19hz rows that duplicate an existing RA listing (shared ra.co URL). */
+/**
+ * Skip 19hz rows that duplicate an existing RA / Eventbrite / Dice listing
+ * (shared ticket-platform URL or id).
+ */
 async function finalizeNineteenHzEvents(parsed: NormalizedEvent[]) {
-  const raIds = [
-    ...new Set(
-      parsed
-        .map((ev) => extractRaEventId(ev.url))
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  if (!raIds.length) {
-    return { events: parsed.slice(0, 200) };
+  const idsByPlatform = new Map<MusicTicketPlatform, Set<string>>();
+  for (const platform of MUSIC_TICKET_PLATFORMS) {
+    idsByPlatform.set(platform, new Set());
+  }
+  for (const ev of parsed) {
+    const ref = extractMusicPlatformRef(ev.url);
+    if (!ref) continue;
+    idsByPlatform.get(ref.platform)!.add(ref.id);
   }
 
-  const existing = await db
-    .select({ sourceEventId: eventsTable.sourceEventId })
-    .from(eventsTable)
-    .where(
-      and(eq(eventsTable.source, "ra"), inArray(eventsTable.sourceEventId, raIds)),
-    );
+  const existingKeys = new Set<string>();
+  const platformClauses = MUSIC_TICKET_PLATFORMS.flatMap((platform) => {
+    const ids = [...(idsByPlatform.get(platform) ?? [])];
+    if (!ids.length) return [];
+    return [
+      and(
+        eq(eventsTable.source, platform),
+        inArray(eventsTable.sourceEventId, ids),
+      ),
+    ];
+  });
 
-  const existingRa = new Set(existing.map((row) => row.sourceEventId));
+  if (platformClauses.length) {
+    const existing = await db
+      .select({
+        source: eventsTable.source,
+        sourceEventId: eventsTable.sourceEventId,
+      })
+      .from(eventsTable)
+      .where(or(...platformClauses));
+    for (const row of existing) {
+      existingKeys.add(`${row.source}:${row.sourceEventId}`);
+    }
+  }
+
   const kept: NormalizedEvent[] = [];
   const dropIds: string[] = [];
 
   for (const ev of parsed) {
-    const raId = extractRaEventId(ev.url);
-    if (raId && existingRa.has(raId)) {
+    const ref = extractMusicPlatformRef(ev.url);
+    if (ref && existingKeys.has(`${ref.platform}:${ref.id}`)) {
       dropIds.push(ev.sourceEventId);
       continue;
     }
     kept.push(ev);
   }
 
+  const capped = kept.slice(0, 200);
+  await attachNineteenHzImages(capped);
+
   return {
-    events: kept.slice(0, 200),
+    events: capped,
     deleteSourceEventIds: dropIds.length
       ? [{ source: "19hz", ids: dropIds }]
       : undefined,
   };
+}
+
+/**
+ * Pull flyers for 19hz rows: DB twin → plain og:image/RA → allowlisted Chromium.
+ */
+async function attachNineteenHzImages(events: NormalizedEvent[]): Promise<void> {
+  const missing = events.filter((ev) => !ev.imageUrl && ev.url);
+  if (!missing.length) return;
+  const stats = await enrichEventsWithTicketImages(missing);
+  if (stats.twins || stats.plain || stats.browser) {
+    console.log(
+      `[19hz] images twins=${stats.twins} plain=${stats.plain} browser=${stats.browser}/${stats.attemptedBrowser}`,
+    );
+  }
+}
+
+/** Lazy detail enrich — plain fetch only (no Chromium on the API process). */
+export async function enrichNineteenHzEventImage(
+  url: string | null | undefined,
+): Promise<string | null> {
+  return resolveTicketPageImage(url);
 }
 
 function inferBayCity(venue: string): string {

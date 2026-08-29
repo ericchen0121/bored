@@ -10,7 +10,7 @@ X-User-Id: <uuid>
 
 Default demo user: `00000000-0000-4000-8000-000000000001` (`DEMO_USER_ID` / `NEXT_PUBLIC_DEMO_USER_ID`).
 
-CORS allows `localhost` / `127.0.0.1` on any port for local web.
+CORS allows `localhost` / `127.0.0.1` and private LAN IPs (RFC1918) on any port for local web / phone testing (`pnpm dev`).
 
 ## Health
 
@@ -24,7 +24,37 @@ CORS allows `localhost` / `127.0.0.1` on any port for local web.
 
 ### `GET /v1/meta/taxonomy`
 
-Interest categories, neighborhoods, default SF location constants.
+Interest categories, per-metro neighborhoods, location constants.
+
+| Field | Notes |
+|---|---|
+| `neighborhoods` | Legacy flat list — **SF / Bay only**. Prefer `neighborhoodsByCity`. |
+| `neighborhoodsByCity` | `{ sf: [...], chicago: [...] }` — chips for tastes onboarding |
+| `defaultLocation` | `SF_DEFAULT` |
+| `locations` | `{ sf, chicago }` metro defaults |
+
+### `GET /v1/geo`
+
+Resolve the nearest feed city for cold start.
+
+| Query | Notes |
+|---|---|
+| `lat`, `lng` | Optional. When both present, nearest metro is computed from coords. |
+| _(none)_ | Uses request IP (`X-Forwarded-For` / `CF-Connecting-IP` / `X-Real-IP`) via IP geolocation. |
+
+Response:
+
+```json
+{
+  "city": "sf" | "chicago",
+  "area": "bay" | "chicago",
+  "lat": 37.77,
+  "lng": -122.42,
+  "source": "coords" | "ip" | "default"
+}
+```
+
+`source: "default"` means lookup failed (private/local IP, timeout, etc.) — client should fall back (timezone heuristic → SF Bay). The web app only calls this when URL/`sessionStorage` have no city yet.
 
 ## Me / prefs / signals
 
@@ -103,10 +133,10 @@ Primary product endpoint.
 
 | Query | Values | Default | Notes |
 |---|---|---|---|
-| `mode` | `tonight` \| `weekend` \| `for_you` \| `all` | `for_you` | Time window + ranking strategy |
+| `mode` | `for_you` \| `today` \| `weekend` \| `date` | `for_you` | Time window + ranking strategy (legacy `tonight`→`today`, `all`→`date`) |
 | `area` | `sf` \| `bay` \| `chicago` | `bay` | Geographic filter (SF proper / Bay / Chicago) |
-| `limit` | 1–200 | 40 (100 for `all`) | |
-| `date` | `YYYY-MM-DD` | — | Local calendar day (metro timezone). Narrows window to that day; used with `mode=all`. Today = remaining events only. |
+| `limit` | 1–200 | 40 (200 for `all` / `date`) | |
+| `date` | `YYYY-MM-DD` | — | Local calendar day in the **metro** timezone (`SF_DEFAULT` / `CHI_DEFAULT`). Used with `mode=all`. Full day window `[midnight, next midnight)` — including earlier today. Web collapses finished (non-live) rows behind “View earlier” when browsing Today. |
 | `categories` | comma list | — | Optional hard filter on interest category ids (e.g. `music.electronic`, `comedy.club`) |
 | `topics` | comma list | — | Optional hard filter by activity type — not tied to ingest source. Single topic recommended; OR when multiple. Selecting a topic in the web UI clears source filters. See [Topic filters](#topic-filters). |
 | `sources` | comma list | — | Optional hard filter by ingest source (`19hz`, `funcheap`, `luma`, `ticketmaster`, …). `ticketmaster` also includes `comedy_venue`; `food` also includes `food_deals`. Hides movie showtimes when set. |
@@ -150,6 +180,7 @@ Response:
       "id": "...",
       "title": "...",
       "startsAt": "...",
+      "endsAt": "..." | null,
       "bucket": "affinity" | "adjacent" | "serendipity",
       "score": 0.91,
       "categories": [],
@@ -161,7 +192,7 @@ Response:
 }
 ```
 
-See [Ranking](./ranking.md) for scoring details.
+See [Ranking](./ranking.md) for scoring details. Timezones, live/happening-now, and “View earlier”: [Architecture → Timezones & live](./architecture.md#timezones--live--earlier-today).
 
 ## Outbound redirects (affiliates)
 
@@ -183,6 +214,27 @@ Env: `TICKETMASTER_AFFILIATE_ID`, `EVENTBRITE_AFFILIATE_CODE`, `OUTBOUND_UTM_SOU
 
 Web: `apps/web/src/lib/outbound.ts`. Full strategy: [Monetization](./monetization.md).
 
+## Admin (`/v1/admin/*`)
+
+Requires `Authorization: Bearer <ADMIN_TOKEN>` (or `X-Admin-Token`). See [Admin](./admin.md).
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/admin/health` | Auth check |
+| GET | `/v1/admin/ingest/adapters` | Adapter ids + last run + static schedules |
+| GET | `/v1/admin/ingest/runs` | Paginated run history |
+| GET/POST | `/v1/admin/ingest/jobs` | Queue / enqueue (`phase1` \| `all` \| `adapters`) |
+| GET | `/v1/admin/events` | Search listings |
+| GET/PATCH | `/v1/admin/events/:id` | Detail + ops edits |
+| GET | `/v1/admin/stats/tag-coverage` | Per-source category/tag gaps |
+| GET/POST | `/v1/admin/sponsors` | Sponsor CRM |
+| GET/PATCH | `/v1/admin/sponsors/:id` | |
+| POST | `/v1/admin/sponsors/:id/boosts` | Attach boost to event |
+| DELETE | `/v1/admin/sponsors/:id/boosts/:eventId` | Clear boost |
+| GET | `/v1/admin/stats/sponsors` | Inventory health |
+| POST | `/v1/admin/stats/sponsors/clear-stale` | Clear expired boosts |
+| GET | `/v1/admin/stats/outbound` | Click rollups (`?days=&city=&sponsorId=`) |
+
 ## Client notes
 
 - Web uses `apps/web/src/lib/api.ts` → `NEXT_PUBLIC_API_URL`
@@ -192,4 +244,5 @@ Web: `apps/web/src/lib/outbound.ts`. Full strategy: [Monetization](./monetizatio
 - **Sources** (`?sources=luma,19hz`) filter by adapter provenance; orthogonal to topics
 - After saving tastes, navigate to `/?mode=for_you&area=bay` so the feed reloads with new prefs
 - Detail panel: desktop opens a fixed right-edge drawer with a Luma-style animated mesh background tinted by event type (`LumaMeshBackground` + `MESH_PALETTES` in `apps/web/src/components/detail/`)
+- **Today:** finished events stay in the payload; UI hides them behind a subtle “View N earlier” toggle. Live events stay visible with a pulsing **Now** badge (`LiveNowBadge`, `isHappeningNow` in `@bored/shared`)
 - iOS should use the same `/v1/*` contract; do not talk to Postgres directly

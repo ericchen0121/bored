@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "baseline-migrations": "tsx src/baselineMigrations.ts",
     "push": "drizzle-kit push",
     "seed": "tsx src/seed.ts"
   },

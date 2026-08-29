@@ -9,7 +9,7 @@ export function FeedBackLink() {
 
   return (
     <a
-      href="/"
+      href={feedHomeHref()}
       onClick={(e) => {
         e.preventDefault();
         router.push(feedHomeHref());

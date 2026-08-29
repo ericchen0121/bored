@@ -10,6 +10,7 @@ Web-first feed of things to do in **San Francisco / Bay Area** and **Chicago**: 
 - [City expansion strategy](./docs/city-expansion-strategy.md)
 - [API](./docs/api.md)
 - [Ingest](./docs/ingest.md)
+- [Deploy (Railway)](./docs/deploy.md)
 - [Ranking](./docs/ranking.md)
 - [Data model](./docs/data-model.md)
 - [Monetization](./docs/monetization.md)
@@ -39,13 +40,14 @@ pnpm db:seed
 # 5. Optional: pull live sources
 pnpm --filter @bored/ingest exec tsx src/cli.ts --once --phase1
 
-# 6. Run API + web
-pnpm dev:api   # :4000
-pnpm dev:web   # :3000
+# 6. Run API + web (supervised — frees ports, auto-restart on crash)
+pnpm dev
 ```
 
-- Web: http://localhost:3000
-- API: http://localhost:4000/health
+- Web: http://127.0.0.1:3000 (phone: printed LAN URL from `pnpm dev`)
+- API: http://127.0.0.1:4000/health
+- After `.env` changes: `pnpm dev:restart`
+- Full dev guide: [docs/development.md](./docs/development.md)
 
 ## Ingest
 
@@ -63,10 +65,20 @@ Adapters skip gracefully when keys are missing. Seed data still powers a demo fe
 
 See [docs/ingest.md](./docs/ingest.md) for the full adapter list.
 
+## Production (Railway)
+
+Postgres + API + web + ingest worker. See **[docs/deploy.md](./docs/deploy.md)**.
+
+```bash
+railway login
+pnpm railway:setup
+# then set SERVICE / secrets per service and railway up
+```
+
 ## Feed ranking
 
 ~65% affinity / ~25% adjacent / ~10% serendipity, using interest weights, neighborhoods, budget, distance, and save/dismiss/going signals.
 
-Modes: Tonight · This weekend · For you · All events. Cities: San Francisco · Chicago. Areas: All SF · All Bay Area · Chicago.
+Modes: For you · Today · Weekend · Select Date. Layout: cards / large / poster / By time. Cities: San Francisco · Chicago. Areas: All SF · All Bay Area · Chicago.
 
 Details: [docs/ranking.md](./docs/ranking.md).

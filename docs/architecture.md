@@ -82,7 +82,7 @@ Cities are a **product surface**, not separate apps. One Postgres, one API, one 
 | `eventInArea()` | `taxonomy.ts` | Keeps metros isolated — Chicago rows never leak into Bay feeds |
 | `feedFilterSourcesForCity()` | `taxonomy.ts` | Per-metro source chips on home feed |
 | `FEED_TOPICS` / `matchesFeedTopic()` | `taxonomy.ts` | Activity-type chips (concerts, happy hours, …) — independent of ingest source |
-| `CHI_NEIGHBORHOODS` (planned) | `taxonomy.ts` | Onboarding + ranking — SF neighborhoods exist today |
+| `NEIGHBORHOODS` / `CHI_NEIGHBORHOODS` | `taxonomy.ts` | Per-metro tastes chips via `neighborhoodsForCity(city)` |
 
 SF has two area scopes (`sf` = city proper, `bay` = full metro). Chicago uses a single `chicago` area today.
 
@@ -168,14 +168,15 @@ flowchart TB
 
 - Per-metro RSS/outlets in `packages/shared/src/foodCityConfig.ts` (SF: Eater, Infatuation, FOUND; CHI: Eater, Infatuation)
 - Sources are reviews, maps, hit lists — not calendar listings
-- `startsAt` is a stable near-term dinner slot (`suggestionStartsAt`) so tips appear in tonight/weekend windows
+- `startsAt` is a stable near-term dinner slot (`suggestionStartsAt`) so tips appear in today/weekend windows
 - UI labels them as recommendations, not timed events
 - Detail pages lazy-enrich from source URL via `foodEditorial.ts` (+ Google Places photo fallback)
 
 **Scheduled deals** (`food_deals`):
 
 - Curated happy hours / lunch specials in `packages/shared/src/foodDeals.ts` (`CURATED_FOOD_DEALS_SF`, `CURATED_FOOD_DEALS_CHICAGO`)
-- **One DB row per deal** with `rawPayload.schedule`; `startsAt` is the next occurrence. Feed expands matching weekdays into tonight / weekend / by-time windows (`expandFoodDealRowsForFeed`); For You shows one card per venue deal
+- One durable row per deal with `rawPayload.schedule`; `startsAt` is the next occurrence
+- Feed expands matching weekdays into today / weekend / Select Date windows (`expandFoodDealRowsForFeed`)
 - Feed `food` filter chip also matches `food_deals` rows; **Happy hours** topic matches `food_deals` where `dealKind !== "lunch"`
 
 Replicating food in a new city = new RSS/outlet URLs + curated deals list + optional IG handles — same adapters with city config, not a new vertical.
@@ -194,14 +195,14 @@ Ranking treats comedy subtypes as adjacent (club ↔ showcase ↔ underground).
 
 ### Read path (feed)
 
-1. Web calls `GET /v1/feed?mode=&area=&topics=&sources=`
+1. Web calls `GET /v1/feed?mode=&area=&topics=&sources=` (optional `date=YYYY-MM-DD`)
 2. API loads user prefs + signals from Postgres
-3. API loads upcoming `events` (+ film showtimes) in the time window
+3. API loads `events` (+ film showtimes) in the time window — for a selected calendar day, the full local day (metro TZ)
 4. Filters by **area** (`sf` | `bay` | `chicago`) via `eventInArea`
 5. Optional hard filters: **topics** (activity type), **sources** (adapter), **categories** (interest ids), `freeOnly`
 6. When area is Chicago, recenters ranking geo on `CHI_DEFAULT` and widens radius
-7. `@bored/shared` `rankFeed` scores and buckets cards
-8. Client renders event cards and poster-forward movie cards; topic chips and source chips come from `FEED_TOPICS` and `feedFilterSourcesForCity(metro)`
+7. `@bored/shared` `rankFeed` scores and buckets cards (chronological for `mode=all` / day browse; prefer live+upcoming when truncating)
+8. Client renders cards; on **Today**, collapses finished (non-live) rows behind “View earlier”; live rows show a **Now** pulse
 
 ### Write path (tastes / signals)
 
@@ -230,12 +231,32 @@ Home is one composition per metro, not a source dashboard:
 
 - **City:** San Francisco | Chicago
 - **Area:** All SF | All Bay Area | Chicago
-- **Mode:** Tonight | This weekend | For you | By time
+- **Mode:** For you | Today | Weekend | Select Date
+- **Day strip:** under Weekend (Fri–Sat–Sun highlighted) and Select Date (All days + calendar); selecting a day passes `?date=YYYY-MM-DD`
+- **Today:** full local calendar day; live + upcoming first; subtle “View N earlier” expands finished events; **Now** badge while an event is in progress
+- **By time:** layout icon (chrono day-grouped list), not a mode chip
 - **Topic chips:** activity filters (Concerts, Comedy, Free, Happy hours, Street festivals, …) — `FEED_TOPICS`, not tied to adapter
 - **Source chips:** metro-specific subset of adapters (secondary to topics)
 - **Tastes:** onboarding interest weights — personalize ranking, not a hard feed filter
 - Event detail + film detail in a right-edge drawer with Luma-style animated mesh background (colors from event type); trailers, RT/Letterboxd reviews, and outbound tickets / review deep-links
 - Food cards show recommendation framing; food deals show weekday/time windows
+
+## Timezones, live & earlier today
+
+Two timezone concepts — do not conflate them:
+
+| Concept | Source | Used for |
+|---|---|---|
+| **Metro TZ** | `SF_DEFAULT` / `CHI_DEFAULT` (`America/Los_Angeles` / `America/Chicago`) | Day strip, `?date=` calendar bounds (`calendarDayBounds`), feed list formatting |
+| **Event TZ** | `events.timezone` (set at ingest) | Detail page wall-clock labels; usually matches the metro |
+
+**Storage:** `startsAt` / `endsAt` are UTC (`timestamptz`). Ingest parses source wall clocks into those instants.
+
+**Live / happening now:** compare UTC instants — `Date.now()` vs `[startsAt, endsAt)` via `isHappeningNow()` in `packages/shared/src/datetime.ts`. Metro TZ is **not** needed for the live check (an SF 7pm start and a Chicago 7pm start are already different UTC values). If `endsAt` is missing, assume **3 hours** (`DEFAULT_EVENT_DURATION_MS`).
+
+**Earlier today (web):** when browsing Today, the API returns the full local day. The client (`ByTimeFeed` + `collapseEarlier`) hides finished non-live rows behind “View earlier” / “Hide earlier”. Live events stay in the main list with `LiveNowBadge`.
+
+Helpers: `dayKey`, `calendarDayBounds`, `fromZonedTime`, `isHappeningNow`, `isEarlierEvent` — `@bored/shared`.
 
 ## Design constraints
 

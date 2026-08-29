@@ -33,6 +33,11 @@ import {
 } from "./adapters/eventbrite.js";
 
 export const ALL_ADAPTERS: SourceAdapter[] = [
+  // Ticket platforms before 19hz so finalize can skip URL/id twins in-run.
+  raChicagoAdapter,
+  raSfAdapter,
+  eventbriteAdapter,
+  eventbriteChicagoAdapter,
   nineteenHzAdapter,
   nineteenHzChicagoAdapter,
   funcheapAdapter,
@@ -55,10 +60,6 @@ export const ALL_ADAPTERS: SourceAdapter[] = [
   newRestaurantsAdapter,
   do312Adapter,
   chicagoCheapAdapter,
-  raChicagoAdapter,
-  raSfAdapter,
-  eventbriteAdapter,
-  eventbriteChicagoAdapter,
 ];
 
 export const PHASE1_ADAPTERS = ALL_ADAPTERS.filter((a) =>
@@ -303,27 +304,63 @@ export async function purgeStaleEvergreenTips(
 }
 
 /**
- * Delete 19hz rows that duplicate an RA listing (shared ra.co URL).
+ * Delete 19hz rows that duplicate RA / Eventbrite / Dice (shared ticket URL/id).
  * Feed merge remains as a safety net for any stragglers.
  */
-export async function prune19hzRaTwins(): Promise<number> {
+export async function prune19hzPlatformTwins(): Promise<number> {
   const deleted = await db.execute(sql`
     DELETE FROM events AS hz
     WHERE hz.source = '19hz'
       AND EXISTS (
-        SELECT 1 FROM events AS ra
-        WHERE ra.source = 'ra'
-          AND (
-            (
-              hz.url ~* 'ra\\.co/events/[0-9]+'
-              AND ra.source_event_id = substring(hz.url from 'ra\\.co/events/([0-9]+)')
-            )
-            OR (ra.url IS NOT NULL AND hz.url IS NOT NULL AND ra.url = hz.url)
-            OR (
-              ra.source_event_id IS NOT NULL
-              AND hz.url ILIKE '%ra.co/events/' || ra.source_event_id || '%'
+        SELECT 1 FROM events AS plat
+        WHERE (
+          (
+            plat.source = 'ra'
+            AND (
+              (
+                hz.url ~* 'ra\\.co/events/[0-9]+'
+                AND plat.source_event_id = substring(hz.url from 'ra\\.co/events/([0-9]+)')
+              )
+              OR (plat.url IS NOT NULL AND hz.url IS NOT NULL AND plat.url = hz.url)
+              OR (
+                plat.source_event_id IS NOT NULL
+                AND hz.url ILIKE '%ra.co/events/' || plat.source_event_id || '%'
+              )
             )
           )
+          OR (
+            plat.source = 'eventbrite'
+            AND (
+              (
+                hz.url ~* 'eventbrite\\.com/e/[^[:space:]]*-tickets-[0-9]+'
+                AND plat.source_event_id = substring(
+                  hz.url from 'eventbrite\\.com/e/[^[:space:]]*-tickets-([0-9]+)'
+                )
+              )
+              OR (plat.url IS NOT NULL AND hz.url IS NOT NULL AND plat.url = hz.url)
+              OR (
+                plat.source_event_id IS NOT NULL
+                AND hz.url ILIKE '%-tickets-' || plat.source_event_id || '%'
+              )
+            )
+          )
+          OR (
+            plat.source = 'dice'
+            AND (
+              (
+                hz.url ~* 'dice\\.fm(?:/partner/tickets)?/event/[a-z0-9]+'
+                AND lower(plat.source_event_id) = lower(substring(
+                  hz.url from 'dice\\.fm(?:/partner/tickets)?/event/([a-z0-9]+)'
+                ))
+              )
+              OR (plat.url IS NOT NULL AND hz.url IS NOT NULL AND plat.url = hz.url)
+              OR (
+                plat.source_event_id IS NOT NULL
+                AND hz.url ILIKE '%dice.fm%/event/' || plat.source_event_id || '%'
+              )
+            )
+          )
+        )
       )
     RETURNING hz.id
   `);
@@ -332,6 +369,9 @@ export async function prune19hzRaTwins(): Promise<number> {
     : ((deleted as { rows?: unknown[] }).rows ?? []);
   return rows.length;
 }
+
+/** @deprecated Prefer prune19hzPlatformTwins */
+export const prune19hzRaTwins = prune19hzPlatformTwins;
 
 /** Rows per INSERT … ON CONFLICT batch (keeps bind params under Postgres limits). */
 const EVENT_UPSERT_CHUNK = 75;
@@ -415,7 +455,8 @@ export async function upsertEvents(list: NormalizedEvent[]): Promise<number> {
           organizer: sql`coalesce(excluded.organizer, ${events.organizer})`,
           registrationStatus: sql`excluded.registration_status`,
           registrationCheckedAt: sql`excluded.registration_checked_at`,
-          rawPayload: sql`coalesce(excluded.raw_payload, ${events.rawPayload})`,
+          // Merge listing + prior detail enrichment (sourcePageUrl, eventDetailsUrl, …).
+          rawPayload: sql`coalesce(excluded.raw_payload, '{}'::jsonb) || coalesce(${events.rawPayload}, '{}'::jsonb)`,
           contentHash: sql`excluded.content_hash`,
           lastSeenAt: sql`excluded.last_seen_at`,
         },
@@ -672,7 +713,7 @@ export async function runAll(adapters: SourceAdapter[] = ALL_ADAPTERS) {
   for (const adapter of adapters) {
     total += await runAdapter(adapter);
   }
-  const pruned19hz = await prune19hzRaTwins();
+  const pruned19hz = await prune19hzPlatformTwins();
   const staleTips = await purgeStaleEvergreenTips();
   const pastEvents = await purgePastEvents();
   const pastShowtimes = await purgePastShowtimes();
@@ -685,7 +726,7 @@ export async function runAll(adapters: SourceAdapter[] = ALL_ADAPTERS) {
     staleShowtimes > 0
   ) {
     console.log(
-      `[ingest] GC pruned ${pruned19hz} 19hz/RA twins, ${staleTips} stale tips, ${pastEvents} past events, ${pastShowtimes} past showtimes, ${staleShowtimes} stale showtimes`,
+      `[ingest] GC pruned ${pruned19hz} 19hz platform twins, ${staleTips} stale tips, ${pastEvents} past events, ${pastShowtimes} past showtimes, ${staleShowtimes} stale showtimes`,
     );
   }
   return total;

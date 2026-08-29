@@ -2,6 +2,8 @@ import { config } from "dotenv";
 import cron from "node-cron";
 import { resolve } from "node:path";
 import { ALL_ADAPTERS, PHASE1_ADAPTERS, runAll, runAdapter } from "./runner.js";
+import { startIngestJobPoller } from "./jobPoller.js";
+import { STATIC_INGEST_SCHEDULES } from "./schedules.js";
 
 config({ path: resolve(process.cwd(), "../../.env") });
 config();
@@ -10,9 +12,25 @@ const args = process.argv.slice(2);
 const once = args.includes("--once");
 const schedule = args.includes("--schedule");
 const phase1 = args.includes("--phase1");
+const backfillTicketImages = args.includes("--backfill-ticket-images");
+const backfillSportsLinks = args.includes("--backfill-sports-links");
 const only = args.find((a) => a.startsWith("--only="))?.split("=")[1];
 
 async function main() {
+  if (backfillTicketImages) {
+    const { runBackfillTicketImages } = await import(
+      "./backfillTicketImages.js"
+    );
+    await runBackfillTicketImages(args);
+    return;
+  }
+
+  if (backfillSportsLinks) {
+    const { runBackfillSportsLinks } = await import("./backfillSportsLinks.js");
+    await runBackfillSportsLinks(args);
+    return;
+  }
+
   const onlyIds = only
     ? only.split(",").map((s) => s.trim()).filter(Boolean)
     : null;
@@ -34,19 +52,29 @@ async function main() {
   }
 
   console.log("Scheduling ingest jobs…");
-  // Every 6 hours: core scrapers
-  cron.schedule("0 */6 * * *", () => {
+  for (const entry of STATIC_INGEST_SCHEDULES) {
+    cron.schedule(entry.cron, () => {
+      if (entry.scope === "phase1") {
+        void runAll(PHASE1_ADAPTERS);
+        return;
+      }
+      if (entry.scope === "all") {
+        void runAll(ALL_ADAPTERS);
+        return;
+      }
+      const ids = new Set(entry.adapterIds ?? []);
+      const matched = ALL_ADAPTERS.filter((a) => ids.has(a.id));
+      for (const a of matched) void runAdapter(a);
+    });
+  }
+
+  startIngestJobPoller();
+
+  // Production: set INGEST_RUN_ON_BOOT=1 so the first deploy doesn't wait for cron.
+  if (process.env.INGEST_RUN_ON_BOOT === "1") {
+    console.log("INGEST_RUN_ON_BOOT=1 — running Phase 1 once…");
     void runAll(PHASE1_ADAPTERS);
-  });
-  // Daily: phase 2 + recurring
-  cron.schedule("15 6 * * *", () => {
-    void runAll(ALL_ADAPTERS);
-  });
-  // Movies more often when configured
-  cron.schedule("0 */3 * * *", () => {
-    const movies = ALL_ADAPTERS.find((a) => a.id === "movies_tms");
-    if (movies) void runAdapter(movies);
-  });
+  }
 }
 
 main().catch((err) => {

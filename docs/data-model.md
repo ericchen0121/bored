@@ -17,11 +17,22 @@ Notable columns:
 
 - `source` + `sourceEventId` (unique) — identity
 - `kind` — `event` (timed) or `recommendation` (evergreen tip)
-- `startsAt`, venue / geo / neighborhood / `city`
+- `startsAt`, `endsAt` (optional), `timezone` (IANA, default LA)
+- venue / geo / neighborhood / `city`
 - `categories[]`, `tags[]`, price / `isFree`
 - `recurringShowId` (optional)
 - `contentHash` — fingerprint of mutable listing fields (change detection); not a second identity key
 - `lastSeenAt`, `rawPayload`
+- **Sponsored boost:** `isSponsored`, `sponsorId`, `boostWeight`, `sponsorEndsAt` (ingest upserts do not clear these)
+- **`hidden`** — soft-hide from public feed/detail (ops); ingest upserts do not clear
+
+### `sponsors`
+
+Local advertiser / package rows (founder-sold). Linked from `events.sponsorId` when set. Packages: `venue_boost` | `happy_hour` | `festival`. Managed via `/admin/sponsors`.
+
+### `ingest_jobs`
+
+Admin-triggered ingest queue (`phase1` | `all` | `adapters`). Polled by `ingest --schedule`.
 
 ### `recurring_shows`
 
@@ -56,6 +67,8 @@ Adapters should set `city` to a slug when known:
 - `sf`, `chicago`, `oakland`, `berkeley`, `san_jose`, …
 
 Feed area filtering uses city + neighborhood heuristics (`eventInArea`).
+
+**Time fields:** store wall-clock starts/ends as UTC. Metro defaults (`SF_DEFAULT.timezone` / `CHI_DEFAULT.timezone`) define calendar-day feed windows; per-row `timezone` is for display. Live/happening-now compares UTC instants — see [Architecture → Timezones & live](./architecture.md#timezones--live--earlier-today).
 
 ### Curated config (not in Postgres)
 

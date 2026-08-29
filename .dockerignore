@@ -1,0 +1,16 @@
+.git
+.cursor
+.next
+**/node_modules
+**/.next
+**/dist
+.pnpm-store
+.pnpm-home
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage
+agent-transcripts
+docs/**/*.png

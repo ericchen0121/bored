@@ -1,0 +1,12 @@
+---
+description: Always run pnpm/shell commands without asking the user to run them
+alwaysApply: true
+---
+
+# Run commands automatically
+
+In this repo, **never ask the user to run pnpm, ingest, install, migrate, or similar shell commands**. Execute them yourself via the Shell tool.
+
+- Prefer running `pnpm` scripts (`pnpm ingest:backfill-images`, `pnpm typecheck`, installs, etc.) directly.
+- Do not paste "run this yourself" command blocks as the primary action when you can execute them.
+- Only surface commands in the reply as a short record of what you already ran, or when a step truly requires interactive human auth (e.g. browser login).

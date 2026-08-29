@@ -37,12 +37,13 @@ export function FeedCardView({
   selected?: boolean;
   onSelect?: (card: FeedCard) => void;
   timeZone?: string;
-  size?: "default" | "large";
+  size?: "default" | "large" | "poster";
 }) {
   const now = useNow();
   const live = isHappeningNow(card.startsAt, card.endsAt, now);
-  const bucketLabel =
-    card.bucket === "affinity"
+  const bucketLabel = card.isSponsored
+    ? "Sponsored"
+    : card.bucket === "affinity"
       ? "For you"
       : card.bucket === "adjacent"
         ? "Nearby taste"
@@ -53,6 +54,10 @@ export function FeedCardView({
     card.kind === "event"
       ? eventScanTagsForDisplay(card.categories, card.tags, 3)
       : movieGenresForDisplay(card.tags, card.categories, 3);
+  const posterCategory =
+    card.kind === "event"
+      ? eventScanTagsForDisplay(card.categories, card.tags, 1)[0]
+      : movieGenresForDisplay(card.tags, card.categories, 1)[0];
   const isFoodTip = isFoodRecommendationSource(
     card.source ?? "",
     card.categories,
@@ -96,13 +101,78 @@ export function FeedCardView({
     }
   };
 
+  const cardClass = [
+    "card",
+    card.kind === "movie_showtime" ? "movie" : "",
+    card.registrationStatus === "sold_out" ? "sold-out" : "",
+    card.isSponsored ? "is-sponsored" : "",
+    selected ? "is-selected" : "",
+    interactive ? "is-interactive" : "",
+    size === "large" ? "card--large" : "",
+    size === "poster" ? "card--poster" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (size === "poster") {
+    const categoryLabel = posterCategory?.label ?? eventType.label;
+    const categoryClass =
+      card.kind === "movie_showtime"
+        ? "genre"
+        : posterCategory && card.categories.includes(posterCategory.id)
+          ? `type ${eventType.className}`
+          : posterCategory
+            ? "genre"
+            : `type ${eventType.className}`;
+
+    const whenLabel = live && !isEvergreenTip
+      ? null
+      : isEvergreenTip
+        ? null
+        : hasMultipleTimes
+          ? formatDayOnly(card.startsAt, timeZone)
+          : formatWhen(card.startsAt, timeZone);
+
+    return (
+      <article
+        className={cardClass}
+        style={style}
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        aria-pressed={interactive ? selected : undefined}
+        onClick={interactive ? activate : undefined}
+        onKeyDown={interactive ? onKeyDown : undefined}
+      >
+        <FeedCardMedia
+          imageUrl={card.imageUrl}
+          eventType={eventType}
+          placeholderLabel={posterPlaceholderLabel(card)}
+          isVideo={isIgReel}
+        />
+        <div className="card__poster-copy">
+          {(whenLabel || live) && (
+            <div className="card__poster-when">
+              {live && !isEvergreenTip ? <LiveNowBadge /> : whenLabel}
+            </div>
+          )}
+          <h3>{card.title}</h3>
+          <div className="card__poster-meta">
+            <span className={`badge ${categoryClass}`}>{categoryLabel}</span>
+            {card.isSponsored ? (
+              <span className="badge sponsored">Sponsored</span>
+            ) : null}
+            {card.neighborhood ? (
+              <span className="card__poster-place">{card.neighborhood}</span>
+            ) : null}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article
-      className={`card ${card.kind === "movie_showtime" ? "movie" : ""} ${
-        card.registrationStatus === "sold_out" ? "sold-out" : ""
-      } ${selected ? "is-selected" : ""} ${interactive ? "is-interactive" : ""} ${
-        size === "large" ? "card--large" : ""
-      }`}
+      className={cardClass}
       style={style}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
@@ -202,7 +272,11 @@ export function FeedCardView({
             ))}
           </div>
         )}
-        <span className={`bucket ${card.bucket}`}>{bucketLabel}</span>
+        <span
+          className={`bucket ${card.isSponsored ? "sponsored" : card.bucket}`}
+        >
+          {bucketLabel}
+        </span>
       </div>
     </article>
   );

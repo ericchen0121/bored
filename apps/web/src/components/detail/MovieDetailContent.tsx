@@ -1,18 +1,20 @@
 "use client";
 
 import type { FilmDetail, FilmReview } from "./types";
-import { FilmRatingBadges, LetterboxdLogo, RottenTomatoesLogo } from "@/components/FilmRatingBadges";
+import {
+  FilmRatingBadges,
+  ImdbLogo,
+  LetterboxdLogo,
+  RottenTomatoesLogo,
+} from "@/components/FilmRatingBadges";
 import { showtimeOutboundHref } from "@/lib/outbound";
 
-function reviewSourceLabel(source: FilmReview["source"]): string {
-  switch (source) {
-    case "letterboxd":
-      return "Letterboxd";
-    case "rotten_tomatoes":
-      return "Rotten Tomatoes";
-    case "tmdb":
-      return "TMDB";
-  }
+function reviewSourceMeta(r: FilmReview): string {
+  const parts: string[] = [];
+  if (r.source === "tmdb") parts.push("TMDB");
+  if (r.author) parts.push(r.author);
+  if (r.rating != null) parts.push(String(r.rating));
+  return parts.join(" · ");
 }
 
 export function MovieDetailContent({
@@ -61,36 +63,41 @@ export function MovieDetailContent({
           <div className="detail-body__links">
             {film.imdbId && (
               <a
-                className="btn"
+                className="btn btn--logo-link"
                 href={`https://www.imdb.com/title/${film.imdbId}`}
                 target="_blank"
                 rel="noreferrer"
+                aria-label="IMDb"
+                title="IMDb"
               >
-                IMDb
+                <ImdbLogo size="lg" />
               </a>
             )}
             {film.letterboxdUrl && (
               <a
-                className="btn btn--with-icon"
+                className="btn btn--logo-link"
                 href={film.letterboxdUrl}
                 target="_blank"
                 rel="noreferrer"
+                aria-label="Letterboxd"
+                title="Letterboxd"
               >
-                <LetterboxdLogo />
-                Letterboxd
+                <LetterboxdLogo size="lg" />
               </a>
             )}
             {film.rtUrl && (
               <a
-                className="btn btn--with-icon"
+                className="btn btn--logo-link"
                 href={film.rtUrl}
                 target="_blank"
                 rel="noreferrer"
+                aria-label="Rotten Tomatoes"
+                title="Rotten Tomatoes"
               >
                 <RottenTomatoesLogo
+                  size="lg"
                   fresh={(film.ratings?.rtCritics ?? 100) >= 60}
                 />
-                Rotten Tomatoes
               </a>
             )}
           </div>
@@ -124,9 +131,9 @@ export function MovieDetailContent({
             <blockquote className="detail-body__review detail-body__review--consensus">
               <p className="detail-body__review-source detail-body__review-source--logo">
                 <RottenTomatoesLogo
+                  size="md"
                   fresh={(film.ratings?.rtCritics ?? 100) >= 60}
                 />
-                Rotten Tomatoes
               </p>
               <p className="detail-body__review-text">{film.rtConsensus}</p>
               {film.rtUrl && (
@@ -136,7 +143,7 @@ export function MovieDetailContent({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Read on Rotten Tomatoes
+                  Full review
                 </a>
               )}
             </blockquote>
@@ -150,36 +157,38 @@ export function MovieDetailContent({
                   r.content === film.rtConsensus
                 ),
             )
-            .map((r, i) => (
-              <blockquote
-                key={`${r.source}-${i}`}
-                className="detail-body__review"
-              >
-                <p className="detail-body__review-source detail-body__review-source--logo">
-                  {r.source === "letterboxd" ? (
-                    <LetterboxdLogo />
-                  ) : r.source === "rotten_tomatoes" ? (
-                    <RottenTomatoesLogo
-                      fresh={(film.ratings?.rtCritics ?? 100) >= 60}
-                    />
-                  ) : null}
-                  {reviewSourceLabel(r.source)}
-                  {r.author ? ` · ${r.author}` : ""}
-                  {r.rating != null ? ` · ${r.rating}` : ""}
-                </p>
-                <p className="detail-body__review-text">{r.content}</p>
-                {r.url && (
-                  <a
-                    className="detail-body__review-link"
-                    href={r.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Full review
-                  </a>
-                )}
-              </blockquote>
-            ))}
+            .map((r, i) => {
+              const meta = reviewSourceMeta(r);
+              return (
+                <blockquote
+                  key={`${r.source}-${i}`}
+                  className="detail-body__review"
+                >
+                  <p className="detail-body__review-source detail-body__review-source--logo">
+                    {r.source === "letterboxd" ? (
+                      <LetterboxdLogo size="md" />
+                    ) : r.source === "rotten_tomatoes" ? (
+                      <RottenTomatoesLogo
+                        size="md"
+                        fresh={(film.ratings?.rtCritics ?? 100) >= 60}
+                      />
+                    ) : null}
+                    {meta}
+                  </p>
+                  <p className="detail-body__review-text">{r.content}</p>
+                  {r.url && (
+                    <a
+                      className="detail-body__review-link"
+                      href={r.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Full review
+                    </a>
+                  )}
+                </blockquote>
+              );
+            })}
         </section>
       )}
 

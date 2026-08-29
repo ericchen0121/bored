@@ -23,6 +23,8 @@ export type EventDetail = {
   organizer?: string | null;
   ageRestriction?: string | null;
   registrationStatus?: string | null;
+  isSponsored?: boolean | null;
+  sponsorEndsAt?: string | null;
   rawPayload?: {
     author?: string | null;
     authorAvatarUrl?: string | null;

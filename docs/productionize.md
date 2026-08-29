@@ -69,12 +69,21 @@ Checklist of data-model and ingest inefficiencies to fix before (or right after)
 | **Problem** | Food tips, activities, new restaurants, IG tips use fake `startsAt` slots so they appear in timed windows. |
 | **Fix** | `events.kind=recommendation` + curated feed path (timed SQL excludes recommendations); keep suggestion slots for ranking but GC tips not seen in 45 days. |
 
-### 7. RA ↔ 19hz dual storage `[x]`
+### 7. Ticket platform ↔ 19hz dual storage `[x]`
 
 | | |
 |---|---|
-| **Problem** | Both sources stored; feed coalesces (~100+ redundant pairs). |
-| **Fix** | Prefer RA at ingest and skip 19hz twin when URL matches, or mark suppressed; keep feed merge as safety net. |
+| **Problem** | RA / Eventbrite / Dice and 19hz both stored when 19hz deep-links the same ticket URL; feed shows duplicate cards. |
+| **Fix** | Prefer platform row at ingest and skip/prune 19hz twin when URL/id matches; keep feed merge as safety net. Enrich genre tags from 19hz. |
+
+### 8. Do312 dual listings (same-source soft coalesce) `[x]`
+
+| | |
+|---|---|
+| **Problem** | Do312 publishes two calendar rows for one night (different ids/slugs, `&` vs `x`, shorter vs “at Venue”); feed showed duplicate cards with near-identical posters/ticket URLs. |
+| **Fix** | Soft-coalesce after exact title+venue+day: shared ticket URL, or same source + day + soft title + compatible venue. Prefer flyer/organizer/longer title; delete orphan `sourceEventId`s after upsert. Feed soft pass as safety net. |
+| **Files** | `packages/shared/src/coalesceEventOccurrences.ts`, `packages/ingest/src/adapters/do312.ts` |
+| **Docs** | [ingest.md — Same-source soft coalesce](./ingest.md#same-source-soft-coalesce-do312) |
 
 ---
 
@@ -129,14 +138,17 @@ Feed: Comedy / For you → one card per room; By time → room appears under eac
 ## Smoke checks after P2
 
 ```bash
-# No 19hz rows that share an ra.co URL with an RA row
+# No 19hz rows that share a ticket URL/id with RA / Eventbrite / Dice
 psql "$DATABASE_URL" -c "
   SELECT COUNT(*) AS twins FROM events hz
   WHERE hz.source = '19hz'
     AND EXISTS (
-      SELECT 1 FROM events ra
-      WHERE ra.source = 'ra'
-        AND hz.url ILIKE '%ra.co/events/' || ra.source_event_id || '%'
+      SELECT 1 FROM events plat
+      WHERE (
+        (plat.source = 'ra' AND hz.url ILIKE '%ra.co/events/' || plat.source_event_id || '%')
+        OR (plat.source = 'eventbrite' AND hz.url ILIKE '%-tickets-' || plat.source_event_id || '%')
+        OR (plat.source = 'dice' AND hz.url ILIKE '%dice.fm%/event/' || plat.source_event_id || '%')
+      )
     );"
 
 # Food tips use replaceForSource (closed set per metro)

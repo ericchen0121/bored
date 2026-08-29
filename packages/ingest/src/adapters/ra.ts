@@ -129,6 +129,28 @@ function flyerUrl(ev: RaEvent): string | null {
   return front || ev.flyerFront || any || null;
 }
 
+const EVENT_FLYER_QUERY = `
+query GET_EVENT_FLYER($id: ID!) {
+  event(id: $id) {
+    id
+    flyerFront
+    images { filename type }
+  }
+}`;
+
+/** Single-event flyer for RA-linked listings (e.g. 19hz ticket URLs). */
+export async function fetchRaFlyerUrl(
+  eventId: string,
+): Promise<string | null> {
+  const payload = await raGraphql<{
+    data?: { event?: RaEvent | null };
+    errors?: { message: string }[];
+  }>(EVENT_FLYER_QUERY, { id: eventId }, "https://ra.co/");
+  if (payload.errors?.length) return null;
+  const ev = payload.data?.event;
+  return ev ? flyerUrl(ev) : null;
+}
+
 /**
  * RA returns naive local datetimes (`2026-08-25T20:00:00.000`).
  * Interpret in the region timezone via fixed UTC offset (DST approx).

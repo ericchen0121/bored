@@ -1,6 +1,8 @@
+import { finalizeSoftCoalesceEvents } from "@bored/shared/coalesce";
 import {
   contentHash,
   parsePrice,
+  type AdapterFetchResult,
   type NormalizedEvent,
   type SourceAdapter,
 } from "../types.js";
@@ -114,6 +116,20 @@ export function resolveDo312ImageUrl(
   return null;
 }
 
+function do312FetchResult(events: NormalizedEvent[]): AdapterFetchResult {
+  const { events: finalized, orphans } = finalizeSoftCoalesceEvents(events);
+  if (!orphans.length) return { events: finalized };
+  return {
+    events: finalized,
+    deleteSourceEventIds: [
+      {
+        source: "do312",
+        ids: orphans.map((o) => o.sourceEventId),
+      },
+    ],
+  };
+}
+
 /** Do312 Chicago local events calendar (public JSON). */
 export const do312Adapter: SourceAdapter = {
   id: "do312",
@@ -192,6 +208,6 @@ export const do312Adapter: SourceAdapter = {
       if (batch.length < 20) break;
     }
 
-    return { events: events.slice(0, 250) };
+    return do312FetchResult(events.slice(0, 250));
   },
 };

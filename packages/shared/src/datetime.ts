@@ -163,6 +163,8 @@ export type DayCardLabel = {
   weekday: string;
   dateLine: string;
   isToday: boolean;
+  /** Fri / Sat / Sun in the given timezone. */
+  isWeekend: boolean;
 };
 
 /** Funcheap-style day card: weekday on top, "Aug 26" underneath. */
@@ -182,10 +184,13 @@ export function dayCardLabel(
     month: "short",
     day: "numeric",
   });
+  const isWeekend =
+    weekday === "Fri" || weekday === "Sat" || weekday === "Sun";
   return {
     key: yyyyMmDd,
     weekday,
     dateLine,
     isToday: yyyyMmDd === dayKey(now, timeZone),
+    isWeekend,
   };
 }

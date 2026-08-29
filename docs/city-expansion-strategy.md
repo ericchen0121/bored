@@ -165,14 +165,62 @@ Add these steps to the [adapter refactor checklist](./city-seeding.md#adapter-re
 | A5 | Verify feed shows recommendations alongside food tips; no fake times in detail |
 | A6 | Set `categories[]` on every activity row (`outdoors`, `arts`, `food`, …) for topic chips — [ingest contract](./ingest.md#category-mapping-for-topic-filters) |
 | A7 | Document iconic vs local split in PR / seed notes for future editors |
+| A8 | Ship **metro neighborhood chips** (`N_NEIGHBORHOODS` + `neighborhoodsForCity`) — [Tastes / neighborhoods](#tastes--neighborhoods-onboarding) |
 
 **Acceptance:** ≥15 evergreen activity cards per metro, both audience layers represented, detail page enriches from source URL when available.
+
+## Tastes / neighborhoods (onboarding)
+
+Neighborhood chips on **Edit tastes** must be **metro-specific**. SF Mission pills must never appear while the user’s active feed city is Chicago (and vice versa).
+
+| Piece | Where | Guidance |
+|---|---|---|
+| **SF / Bay list** | `taxonomy.ts` → `NEIGHBORHOODS` | City + East Bay / Peninsula chips used for SF tastes |
+| **Chicago list** | `taxonomy.ts` → `CHI_NEIGHBORHOODS` | Align labels with ingest (`food.ts`, Do312, curated activities) — e.g. Wicker Park, Logan Square, West Loop, The Loop, Pilsen |
+| **Resolver** | `neighborhoodsForCity(city)` | Single entry point for web + API |
+| **Defaults** | `defaultNeighborhoodsForCity(city)` | Empty-profile defaults (not hard-coded Mission/North Beach) |
+| **UI** | `apps/web/src/app/onboarding/page.tsx` | Resolve city from `readFeedPrefs()` / `metroFromArea`; filter saved prefs to the active metro’s list; save `lat`/`lng`/`radiusMiles` from that metro’s `*_DEFAULT` |
+| **API** | `GET /v1/meta/taxonomy` → `neighborhoodsByCity` | Flat `neighborhoods` remains SF-only for legacy; prefer `neighborhoodsByCity` |
+
+When adding city **N**:
+
+1. Add `N_NEIGHBORHOODS` (≈12–20 chips locals actually choose)
+2. Extend `neighborhoodsForCity` / `defaultNeighborhoodsForCity`
+3. Add `neighborhoodsByCity.n` on taxonomy meta
+4. Keep chip names in sync with adapter `neighborhood` strings so ranking prefs match rows
+
+**Acceptance:** With feed city = Chicago, `/onboarding` shows only Chicago neighborhoods and saving recenters ranking geo on `CHI_DEFAULT`.
+
+## City hero (web)
+
+Every metro needs a **place-specific feed hero** — not a generic “what’s on” blurb that could sit on any aggregator.
+
+| Piece | Where | Guidance |
+|---|---|---|
+| **Cover photo** | `apps/web/src/lib/city-heroes.ts` → `CITY_HERO_IMAGES` | Unsplash (or similar) dusk/night skyline that takes a saturated color wash; credit + permalink stored |
+| **Party palette** | `CITY_HERO_PALETTES` | 4 hot colors (magenta / coral / amber / cyan family) for canvas orbs + sparks |
+| **Hero lede** | `cityHeroLede()` | ≤~110 chars; local friend voice; name neighborhoods, rooms, or metro-specific cues — **never** “music, comedy, and the odd gem…” |
+| **Title** | `cityHeroTitle()` | `FEED_CITY_LABELS` or area override (e.g. Bay Area) |
+| **Loading phrase** | City feed page | Metro-flavored “Gathering the …” (fog / wind / …) — see [city-seeding checklist](./city-seeding.md#adapter-refactor-checklist-reusable-for-any-new-city) |
+
+**UI contract:** full-bleed cover (viewport edge-to-edge), Partiful-adjacent color energy (canvas FX + hot gradient veil) instead of a calm soft blur. Respect `prefers-reduced-motion` (static orbs, no spark rain).
+
+### Current copy
+
+| Metro / area | Lede |
+|---|---|
+| San Francisco | Foghorn nights, Mission dance floors, and comedy that runs late. |
+| Bay Area | East Bay warehouses, Peninsula stages, and everything between the bridges. |
+| Chicago | Lakefront golden hour, warehouse bass, and rooms that laugh all week. |
+
+When adding city **N**, ship hero image + palette + lede in the same PR as the web city selector.
 
 ### SF status — shipped ✅
 
 - `CURATED_ACTIVITIES_SF` — 34 rows (13 iconic, 21 local gems)
 - `activities` adapter wired in ingest runner
 - Feed/detail UI: untimed tips with `Classic · …` / `Local gem · …` labels
+- City hero: Unsplash cover + party FX + SF / Bay ledes
 
 ### Chicago status — shipped ✅
 
@@ -180,6 +228,7 @@ Add these steps to the [adapter refactor checklist](./city-seeding.md#adapter-re
 - City-aware timezone (`America/Chicago`) in `activities` adapter
 - **Things to do** topic chip (`topics=activities`) — not a source chip
 - Includes Pilsen murals, Puttery mini-golf, Emporium/Replay arcade bars, Politan Row, Diversey range, and lakefront/park loops
+- City hero: Unsplash cover + party FX + Chicago lede
 
 ## Priority vs other verticals
 

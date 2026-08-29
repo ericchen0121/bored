@@ -4,6 +4,27 @@ export function normalizeOccurrenceLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/** City parentheticals / suffixes 19hz appends — strip before grouping. */
+const VENUE_CITY_PAREN =
+  /\s*\((?:san francisco|oakland|berkeley|san jose|chicago|sf|sj|bay area)\)\s*$/i;
+const VENUE_CITY_SUFFIX =
+  /\s*[-–,]\s*(?:san francisco|oakland|berkeley|san jose|chicago|sf)\s*$/i;
+
+/**
+ * Venue identity for dedupe: "Bella (San Francisco)" → "bella",
+ * "Temple SF" → "temple".
+ */
+export function normalizeVenueName(venue: string | null | undefined): string {
+  if (!venue?.trim()) return "";
+  const stripped = venue
+    .trim()
+    .replace(VENUE_CITY_PAREN, "")
+    .replace(VENUE_CITY_SUFFIX, "")
+    .replace(/\s+(?:sf|sj)\s*$/i, "")
+    .trim();
+  return normalizeOccurrenceLabel(stripped);
+}
+
 export type EventOccurrence = {
   startsAt: string;
   url?: string | null;
@@ -101,7 +122,7 @@ export function occurrenceGroupLabel(
 ): string {
   return [
     normalizeOccurrenceLabel(title),
-    normalizeOccurrenceLabel(venue ?? ""),
+    normalizeVenueName(venue),
     dayKey(startsAt, timezone),
   ].join("|");
 }

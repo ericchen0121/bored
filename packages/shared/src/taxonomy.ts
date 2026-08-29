@@ -109,6 +109,7 @@ const TAG_DISPLAY_NOISE = new Set([
   "comedy_venue",
   "recurring",
   "partiful",
+  "trending",
   "newsletter",
   "instagram",
   "openmic_agg",
@@ -411,7 +412,7 @@ const SOURCE_TYPE_HINT: Partial<Record<EventSource, EventTypeKind>> = {
   comedy_venue: "comedy",
   recurring: "comedy",
   luma: "tech",
-  partiful: "nightlife",
+  partiful: "outdoors",
   indie_theater: "movies",
   food: "food",
   new_restaurants: "food",
@@ -676,6 +677,21 @@ export const FEED_TOPIC_LABELS: Record<FeedTopic, string> = {
   activities: "Things to do",
 };
 
+/** Compact emoji prefix for topic chips / carousels */
+export const FEED_TOPIC_EMOJI: Record<FeedTopic, string> = {
+  concerts: "🎵",
+  comedy: "🎙️",
+  movies: "🎬",
+  sports: "🏟️",
+  festivals: "🎉",
+  free: "✨",
+  happy_hours: "🍻",
+  food: "🍽️",
+  nightlife: "🌙",
+  arts: "🎨",
+  activities: "🚶",
+};
+
 export function parseFeedTopics(
   value: string | null | undefined,
 ): FeedTopic[] {
@@ -706,8 +722,38 @@ export type FeedTopicMatchInput = {
 
 const FESTIVAL_RE =
   /\b(festival|street fair|streetfair|block party|night market|carnival|fair)\b/i;
+/** Sport signals — not bare "vs." (battle raps, mashups, "80s vs 90s"). */
 const SPORTS_RE =
-  /\b(sports?|game day|baseball|basketball|football|soccer|hockey|giants|warriors|49ers|athletics|sharks|vs\.?)\b/i;
+  /\b(sports?|game day|baseball|basketball|football|soccer|hockey|volleyball|giants|warriors|49ers|athletics|sharks)\b/i;
+
+/** Sports listing (TM games, tagged sports) — not music/comedy battles. */
+export function isSportsListing(item: FeedTopicMatchInput): boolean {
+  const cats = item.categories;
+  // Music / comedy never count as sports ("Artist A vs. B", genre nights).
+  if (cats.some((c) => c.startsWith("music.") || c.startsWith("comedy."))) {
+    return false;
+  }
+  if (item.source === "19hz" || item.source === "ra") return false;
+
+  const tags = (item.tags ?? []).map((t) => normalizeTagToken(t));
+  const title = (item.title ?? "").toLowerCase();
+  const tagBlob = tags.join(" ");
+  return (
+    tags.includes("sports") ||
+    SPORTS_RE.test(tagBlob) ||
+    SPORTS_RE.test(title) ||
+    (cats.includes("outdoors") && /\bsport/i.test(tagBlob))
+  );
+}
+
+/** Concert / DJ / live-music listing — safe for Spotify-style listen links. */
+export function isMusicListing(item: FeedTopicMatchInput): boolean {
+  if (isSportsListing(item)) return false;
+  const cats = item.categories;
+  if (cats.some((c) => c.startsWith("music."))) return true;
+  if (item.source === "19hz" || item.source === "ra") return true;
+  return false;
+}
 
 /** Whether a feed row matches a topic chip (OR across selected topics at filter time) */
 export function matchesFeedTopic(
@@ -723,8 +769,7 @@ export function matchesFeedTopic(
 
   switch (topic) {
     case "concerts":
-      if (cats.some((c) => c.startsWith("music."))) return true;
-      if (item.source === "19hz" || item.source === "ra") return true;
+      if (isMusicListing(item)) return true;
       if (/\b(concert|live music|tour\b|dj set|\bdj\b)\b/i.test(text)) return true;
       if (
         /\b(rock|pop|jazz|hip hop|hip-hop|rap|metal|punk|indie|alternative|soul|r&b|country|folk)\b/i.test(
@@ -755,12 +800,7 @@ export function matchesFeedTopic(
         cats.some((c) => c.startsWith("movies"))
       );
     case "sports":
-      return (
-        SPORTS_RE.test(tagBlob) ||
-        SPORTS_RE.test(title) ||
-        tags.includes("sports") ||
-        (cats.includes("outdoors") && /\bsport/i.test(tagBlob))
-      );
+      return isSportsListing(item);
     case "festivals":
       return FESTIVAL_RE.test(tagBlob) || FESTIVAL_RE.test(title);
     case "free":
@@ -801,6 +841,15 @@ export function matchesAnyFeedTopic(
 ): boolean {
   if (!topics.length) return true;
   return topics.some((t) => matchesFeedTopic(t, item));
+}
+
+/** Topics that match at least one card — for map/filter carousels. */
+export function topicsPresentInCards(
+  cards: FeedTopicMatchInput[],
+): FeedTopic[] {
+  return FEED_TOPICS.filter((topic) =>
+    cards.some((card) => matchesFeedTopic(topic, card)),
+  );
 }
 
 /** Ticketing / registration availability (Luma and future sources) */
@@ -864,6 +913,7 @@ export const FEED_CITY_LABELS: Record<FeedCity, string> = {
   chicago: "Chicago",
 };
 
+/** SF / Bay onboarding neighborhood chips (also used as legacy flat list). */
 export const NEIGHBORHOODS = [
   "Mission",
   "North Beach",
@@ -882,12 +932,66 @@ export const NEIGHBORHOODS = [
   "South Bay",
 ] as const;
 
+/** Chicago onboarding neighborhood chips — keep names aligned with ingest labels. */
+export const CHI_NEIGHBORHOODS = [
+  "Wicker Park",
+  "Logan Square",
+  "Lincoln Park",
+  "Lakeview",
+  "River North",
+  "West Loop",
+  "The Loop",
+  "Hyde Park",
+  "Pilsen",
+  "Bridgeport",
+  "Andersonville",
+  "Bucktown",
+  "Uptown",
+  "South Loop",
+  "Gold Coast",
+  "Streeterville",
+  "Fulton Market",
+  "Chinatown",
+  "Evanston",
+  "Oak Park",
+] as const;
+
+/** Neighborhood picker options for a feed metro. */
+export function neighborhoodsForCity(
+  city: FeedCity,
+): readonly string[] {
+  return city === "chicago" ? CHI_NEIGHBORHOODS : NEIGHBORHOODS;
+}
+
+/** Default selected neighborhoods when tastes are empty for a metro. */
+export function defaultNeighborhoodsForCity(city: FeedCity): string[] {
+  return city === "chicago"
+    ? ["Wicker Park", "Logan Square", "West Loop"]
+    : ["Mission", "North Beach"];
+}
+
 /** Geographic scope for feed filtering */
 export const FEED_AREAS = ["sf", "bay", "chicago"] as const;
 export type FeedArea = (typeof FEED_AREAS)[number];
 
-export const FEED_MODES = ["tonight", "weekend", "for_you", "all"] as const;
+export const FEED_MODES = ["for_you", "today", "weekend", "date"] as const;
 export type FeedMode = (typeof FEED_MODES)[number];
+
+/** Map legacy mode query/session values to current FEED_MODES. */
+export function normalizeFeedMode(
+  value: string | null | undefined,
+): FeedMode {
+  if (value === "tonight") return "today";
+  if (value === "all") return "date";
+  return FEED_MODES.includes(value as FeedMode)
+    ? (value as FeedMode)
+    : "for_you";
+}
+
+/** Modes that may carry an optional `date=YYYY-MM-DD` filter. */
+export function feedModeAllowsDate(mode: FeedMode): boolean {
+  return mode === "today" || mode === "weekend" || mode === "date";
+}
 
 const SF_CITIES = new Set([
   "sf",

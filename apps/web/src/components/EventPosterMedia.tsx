@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 import type { EventTypeKind } from "@bored/shared";
+import { isFlyerAspectRatio } from "@bored/shared";
 
 function useImageLoadState(imageUrl: string | null | undefined) {
   const [failed, setFailed] = useState(false);
@@ -183,16 +184,14 @@ export function FeedCardMedia({
 export function TimelineThumbMedia({
   imageUrl,
   eventType,
-  useTypedPlaceholder,
 }: {
   imageUrl?: string | null;
   eventType?: { kind: EventTypeKind; className: string };
-  useTypedPlaceholder?: boolean;
 }) {
   const { showImage, onError } = useImageLoadState(imageUrl);
 
   if (!showImage) {
-    if (useTypedPlaceholder && eventType) {
+    if (eventType) {
       return (
         <div
           className={`timeline-row__thumb poster placeholder ${eventType.className}`}
@@ -220,12 +219,40 @@ export function DetailHeroMedia({
   imageUrl,
   eventType,
   placeholderLabel,
+  fit: fitHint,
 }: {
   imageUrl?: string | null;
   eventType: { kind: EventTypeKind; className: string; label: string };
   placeholderLabel: string;
+  /** When known from ingest metadata; otherwise inferred on load from aspect ratio. */
+  fit?: "cover" | "contain";
 }) {
   const { showImage, onError } = useImageLoadState(imageUrl);
+  const [measuredFit, setMeasuredFit] = useState<"cover" | "contain" | null>(
+    null,
+  );
+  const [measuredForUrl, setMeasuredForUrl] = useState(imageUrl);
+  if (measuredForUrl !== imageUrl) {
+    setMeasuredForUrl(imageUrl);
+    setMeasuredFit(null);
+  }
+
+  const handleLoad = (event: SyntheticEvent<HTMLImageElement>) => {
+    const img = event.currentTarget;
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    setMeasuredFit(
+      isFlyerAspectRatio(img.naturalHeight / img.naturalWidth)
+        ? "contain"
+        : "cover",
+    );
+  };
+
+  // Metadata "contain" (e.g. RA flyers) is sticky — landscape party graphics
+  // are still flyers. Pixel measurement can only upgrade cover → contain.
+  const fit: "cover" | "contain" =
+    fitHint === "contain" || measuredFit === "contain"
+      ? "contain"
+      : (measuredFit ?? fitHint ?? "cover");
 
   if (!showImage) {
     return (
@@ -243,7 +270,8 @@ export function DetailHeroMedia({
     <img
       src={imageUrl!}
       alt=""
-      className="detail-body__hero-img"
+      className={`detail-body__hero-img${fit === "contain" ? " detail-body__hero-img--flyer" : ""}`}
+      onLoad={handleLoad}
       onError={onError}
     />
   );

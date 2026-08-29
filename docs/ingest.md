@@ -33,23 +33,31 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --schedule
 
 Root aliases: `pnpm ingest:once`, `pnpm ingest`.
 
+```bash
+# Backfill flyers for existing text-calendar rows (19hz by default)
+pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-ticket-images --limit=500 --browser-cap=80
+
+# Install Chromium once on the ingest host (required for browser fallback)
+pnpm --filter @bored/ingest exec playwright install chromium
+```
+
 ## Adapter inventory
 
 ### Phase 1
 
 | Adapter id | Source | Needs keys? | Notes |
 |---|---|---|---|
-| `19hz` | 19hz.info Bay Area HTML | No | Electronic / dance |
+| `19hz` | 19hz.info Bay Area HTML | No | Electronic / dance; ticket-link flyer enrich (plain + optional Chromium) |
 | `19hz_chi` | 19hz.info Chicago HTML (`eventlisting_CHI.php`) | No | Same scrape path; `source=19hz`, `city=chicago` |
 | `funcheap` | sf.funcheap.com RSS | No | Free/cheap |
 | `luma` | Luma public discover JSON | No | Tech / meetups (SF place id). Pulls `cover_url` images + `registration_availability` (open / waitlist / sold-out). Detail page refreshes status via `event/get` when stale (>10m). |
 | `luma_chi` | Luma Chicago discover | No | Chicago place id; same `source=luma` |
-| `ticketmaster` | Discovery API latlong SF + 50mi | `TICKETMASTER_API_KEY` | Concerts / sports / theater; post-filters to Bay cities (CA). Same-day showtimes coalesced (native TM id kept); multi-day runs capped at **7** local days/title+venue. |
-| `ticketmaster_chi` | Discovery API latlong CHI + 40mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; IL only. Same coalesce/cap as SF. |
+| `ticketmaster` | Discovery API latlong SF + 50mi | `TICKETMASTER_API_KEY` | Concerts / sports / theater; post-filters to Bay cities (CA). Same-day showtimes coalesced (native TM id kept); multi-day runs capped at **7** local days/title+venue. **Sports:** after event search, fetches each attraction via `/attractions/{id}` and stores `rawPayload.teams[]` with `homepageUrl` / `instagramUrl` / `wikiUrl` from TM `externalLinks` (detail UI prefers these; small local registry is fallback when TM has none). Backfill existing rows: `pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-sports-links`. |
+| `ticketmaster_chi` | Discovery API latlong CHI + 40mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; IL only. Same coalesce/cap + sports attraction enrich as SF. |
 | `comedy_venue` / `comedy_venue_chi` | TM keyword comedy clubs | `TICKETMASTER_API_KEY` | SF: Cobb's / Punch Line; CHI: Zanies, Laugh Factory, Comedy Bar, Second City, iO. Same coalesce/cap; orphans + legacy group-key ids pruned. |
 | `recurring` | `recurring_shows` table | No | One durable row per active show; feed expands weekdays |
 | `movies_tms` | Gracenote TMS showtimes | `TMS_API_KEY` | Showtimes + Fandango ticket links; enrich via Letterboxd/RT scrape |
-| `do312` | Do312 events.json | No | Chicago local calendar |
+| `do312` | Do312 events.json | No | Chicago local calendar. Soft-coalesces dual listings (shared ticket URL or same-source soft title/venue/day); orphan twins deleted after upsert — see [Same-source soft coalesce](#same-source-soft-coalesce-do312) |
 | `chicago_cheap` | chicagoonthecheap.com/events/ | No | Free/cheap editorial calendar (Funcheap analog) |
 | `ra_chi` / `ra_sf` | Resident Advisor GraphQL | No | Lineup, genres, flyer, age, cost; `source=ra` |
 | `eventbrite` | Eventbrite Bay Area discovery HTML | No | SF/Oakland/SJ/Berkeley slugs via embedded `__SERVER_DATA__`; `source=eventbrite` |
@@ -99,6 +107,31 @@ Feed **topic chips** (Concerts, Comedy, Free, Happy hours, …) filter rows via 
 | Arts & culture | `arts` (+ theatre/museum tags when known) |
 
 Music genres from free-form tags (19hz, RA) should call `enrichCategoriesWithTags()` at ingest **and** feed-read for older rows.
+
+### Cross-source music dedupe (19hz ↔ ticket platforms)
+
+When a 19hz row’s ticket URL is RA / Eventbrite / Dice and that platform id already exists, ingest skips (and GC prunes) the 19hz twin. The feed also coalesces on shared URL/id — prefer platform flyer/copy, enrich tags from 19hz.
+
+**Soft match (feed):** when ticket URLs diverge (common: 19hz → `luma.com` / other RSVP while RA has the same night), we still merge if **same local day (±4h start)**, **venue identity** after stripping city parentheticals (`Bella (San Francisco)` → `bella`), and **title soft-match** (containment / token subset / Jaccard ≥ 0.4) or RA `artists[]` appearing in the 19hz title. Preferred sources over 19hz: `ra`, `eventbrite`, `dice`, `ticketmaster`, `luma`. Generic venues (`TBA`, `TBD`, …) never soft-match. Same-day exact title+venue coalesce also uses city-stripped venue names.
+
+### Same-source soft coalesce (Do312)
+
+Do312 (and similar city calendars) often publish **two listings for one night** — different Do312 ids / permalinks, overlapping titles (`Flow State & …` vs `Flow State x …`, or `Chicago Onscreen` vs `Chicago Onscreen at Grant Park`), sometimes the same external ticket URL.
+
+**Ingest (durable):** `do312` runs `finalizeSoftCoalesceEvents()` after fetch (`packages/shared/src/coalesceEventOccurrences.ts`):
+
+1. Exact same title + venue + local day (existing coalesce)
+2. **Soft merge** via `listingsSoftDuplicateMatch` / `coalesceSoftDuplicates`:
+   - Shared `listingIdentityUrl` (any sources) — e.g. both rows → `thebloxoffice.com/events/5327`
+   - Or **same `source`** + same local day + `musicTitlesSoftMatch` + compatible venue
+   - Venue: real venues soft-match; both `TBA`/`TBD`/empty only when starts are within **1h**
+3. Canonical pick: has `imageUrl` → has `organizer` → longer title → earlier `startsAt` (prefers flyer + richer listing)
+4. Prefer external ticket URL over `do312.com` permalink; otherwise keep canonical URL
+5. Sibling `sourceEventId`s land in `rawPayload.coalescedFrom`; runner deletes orphans after upsert
+
+**Feed (safety net):** `coalesceEventOccurrences` in the feed path applies the same soft pass so stragglers collapse until the next Do312 ingest GC.
+
+**Reuse:** Ticketmaster / comedy already call `coalesceNormalizedOccurrences` (now includes the soft pass). Other same-source calendars with dual listings should call `finalizeSoftCoalesceEvents` like Do312.
 
 ### Per-adapter checklist (new city or backfill)
 
@@ -202,6 +235,41 @@ Those URLs are often paywalled subscriber posts. Even when free, one post enumer
 Film metadata (posters, Letterboxd/RT ratings, consensus, review snippets, IMDb id) is scraped in `enrichFilm` — no TMDB/OMDb keys. Trailers prefer YouTube ids found on Letterboxd/RT pages, then `YOUTUBE_API_KEY` search.
 
 Missing optional keys → adapter logs a warning and returns empty (seed data still works).
+
+### Ticket-page flyer scrape (multi-city)
+
+19hz (and any future **text-table** city calendar) has no images on the listing page — flyers live on outbound ticket URLs. Enrichment is shared and metro-agnostic:
+
+| Step | Module | When |
+|---|---|---|
+| 1. DB twin | `ticketImageEnrich.ts` | Same RA / Ticketmaster / Eventbrite URL already imaged |
+| 2. Plain HTTP | `ticketPageImage.ts` | Dice, Posh, Eventbrite, RA GraphQL, etc. |
+| 3. Chromium og:image | `browserOgImage.ts` | Allowlisted hosts that block plain fetch (Tixr, AXS, Eventim, Ticketmaster, Etix, …) |
+
+**Rules for every metro**
+
+- Run Chromium **only on the ingest worker**, never on the API/web process. Detail-page lazy enrich uses step 1–2 only.
+- Persist `events.image_url` once; upsert keeps existing images when a later scrape returns null.
+- Cap pages per run (`BROWSER_IMAGE_SCRAPE_CAP`, default 40) and concurrency (`BROWSER_IMAGE_SCRAPE_CONCURRENCY`, default 2).
+- **Do not** browser-scrape Instagram / Facebook (login walls, ToS, low hit rate).
+- Disable with `BROWSER_IMAGE_SCRAPE=0` on hosts without browsers installed; ingest still does twin + plain fetch.
+- After adding a new city calendar adapter, call `enrichEventsWithTicketImages()` the same way `19hz` does — do not fork host lists per city.
+- One-time backfill after deploy / city launch:
+
+```bash
+pnpm --filter @bored/ingest exec playwright install chromium
+pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-ticket-images --source=19hz --limit=500 --browser-cap=80
+```
+
+Allowlist lives in `BROWSER_IMAGE_HOST_RES` (`browserOgImage.ts`). Extend there when a new ticket host shows up across cities.
+
+Env (see `.env.example`):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `BROWSER_IMAGE_SCRAPE` | `1` | Set `0` to skip Chromium |
+| `BROWSER_IMAGE_SCRAPE_CAP` | `40` | Max browser pages per pass |
+| `BROWSER_IMAGE_SCRAPE_CONCURRENCY` | `2` | Parallel pages (max 4) |
 
 ## Schedules (`--schedule`)
 

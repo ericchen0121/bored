@@ -124,7 +124,14 @@ export const SignalInputSchema = z.object({
 });
 
 export const FeedQuerySchema = z.object({
-  mode: z.enum(["tonight", "weekend", "for_you", "all"]).default("for_you"),
+  mode: z.preprocess(
+    (v) => {
+      if (v === "tonight") return "today";
+      if (v === "all") return "date";
+      return v;
+    },
+    z.enum(["for_you", "today", "weekend", "date"]).default("for_you"),
+  ),
   area: z.enum(["sf", "bay", "chicago"]).default("bay"),
   lat: z.coerce.number().optional(),
   lng: z.coerce.number().optional(),
@@ -140,7 +147,8 @@ export const FeedQuerySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  limit: z.coerce.number().min(1).max(200).default(40),
+  /** Select-date overview / calendar meta needs a wide window (web uses 500). */
+  limit: z.coerce.number().min(1).max(500).default(40),
 });
 
 export const FeedCardSchema = z.object({
@@ -154,6 +162,9 @@ export const FeedCardSchema = z.object({
   imageUrl: z.string().nullable(),
   venueName: z.string().nullable(),
   neighborhood: z.string().nullable(),
+  /** Present when known — used for map pins; omitted/null when source has no coords. */
+  lat: z.number().nullable().optional(),
+  lng: z.number().nullable().optional(),
   categories: z.array(z.string()),
   /** Free-form style tags (e.g. 19hz house/techno) for feed scanning */
   tags: z.array(z.string()).optional(),
@@ -170,6 +181,10 @@ export const FeedCardSchema = z.object({
   url: z.string().nullable().optional(),
   score: z.number(),
   bucket: z.enum(["affinity", "adjacent", "serendipity"]),
+  /** Native boost — labeled in UI; placed by injectSponsoredIntoFeed. */
+  isSponsored: z.boolean().optional(),
+  /** Relative priority among sponsored cards (higher first). */
+  boostWeight: z.number().optional(),
   filmId: z.string().uuid().optional(),
   ratings: RatingsSchema.optional(),
   showtimesPreview: z

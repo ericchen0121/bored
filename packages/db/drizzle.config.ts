@@ -7,7 +7,8 @@ config();
 
 export default defineConfig({
   schema: "./src/schema.ts",
-  out: "../../drizzle",
+  // Repo-root /drizzle — committed and used by migrate.ts + Railway pre-deploy
+  out: resolve(__dirname, "../../drizzle"),
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL ?? "postgres://bored:bored@localhost:5432/bored",

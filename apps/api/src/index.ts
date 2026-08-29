@@ -3,6 +3,7 @@ import { db, events, films, outboundClicks, signals, showtimes, theaters, userPr
 import {
   FeedQuerySchema,
   INTEREST_CATEGORIES,
+  CHI_NEIGHBORHOODS,
   NEIGHBORHOODS,
   SF_DEFAULT,
   CHI_DEFAULT,
@@ -11,21 +12,24 @@ import {
   affiliateConfigFromEnv,
   applyAffiliateAndUtm,
   calendarDayBounds,
-  coalesceRaNineteenHz,
+  dayKey,
+  coalesceMusicPlatformNineteenHz,
   CURATED_FEED_SOURCE_IDS,
   CURATED_ONLY_TIMED_SOURCES,
   enrichCategoriesWithTags,
   eventInArea,
   eventTimesPreview,
   expandSourceFilter,
-  extractRaEventId,
+  extractMusicPlatformRef,
   expandFoodDealRowsForFeed,
   expandRecurringRowsForFeed,
   filterCuratedFeedRows,
   foodDealScheduleFromPayload,
+  isMusicTicketPlatform,
   locationDefaultForArea,
-  mergeRaWithNineteenHz,
+  mergePlatformWithNineteenHz,
   metroFromArea,
+  MUSIC_TICKET_PLATFORMS,
   parseEventSources,
   parseFeedDate,
   foodRecommendationLabel,
@@ -35,6 +39,7 @@ import {
   isActivityRecommendationSource,
   stripInfatuationRatingTitle,
   FOUND_NON_FOOD_SECTIONS,
+  resolveEventCoords,
   extractFoundSectionHint,
   igFoodRecommendationLabel,
   isFoodRecommendationSource,
@@ -44,10 +49,14 @@ import {
   newRestaurantRecommendationLabel,
   parseFeedTopics,
   rankFeed,
+  rankForYouTopicFeed,
   resolveEventKind,
   resolveEventOutboundUrl,
+  injectSponsoredIntoFeed,
+  isSponsoredActive,
   type EventOutboundSlot,
   type Rankable,
+  upgradeFuncheapImageUrl,
   type UserPrefs,
 } from "@bored/shared";
 
@@ -57,31 +66,44 @@ import { and, asc, eq, gte, inArray, lt, lte, notInArray, sql } from "drizzle-or
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { resolve } from "node:path";
+import { adminApp } from "./admin.js";
+import { resolveGeo } from "./geo.js";
 
 config({ path: resolve(process.cwd(), "../../.env") });
 config();
 
+const DEFAULT_DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
 const DEMO_USER_ID =
-  process.env.DEMO_USER_ID ?? "00000000-0000-4000-8000-000000000001";
+  process.env.DEMO_USER_ID?.trim() || DEFAULT_DEMO_USER_ID;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type EventRow = typeof events.$inferSelect;
 
 const app = new Hono();
+
+/** Localhost + RFC1918 LAN (phone-on-Wi‑Fi testing via `pnpm dev:mobile`). */
+const LOCAL_DEV_ORIGIN =
+  /^http:\/\/(localhost|127\.0\.0\.1|192\.168(?:\.\d{1,3}){2}|10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(:\d+)?$/;
 
 app.use(
   "*",
   cors({
     origin: (origin) => {
       if (!origin) return process.env.WEB_ORIGIN ?? "http://localhost:3000";
-      if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+      if (LOCAL_DEV_ORIGIN.test(origin)) return origin;
       return process.env.WEB_ORIGIN ?? "http://localhost:3000";
     },
-    allowHeaders: ["Content-Type", "X-User-Id"],
+    allowHeaders: ["Content-Type", "X-User-Id", "Authorization", "X-Admin-Token"],
   }),
 );
 
+app.route("/v1/admin", adminApp);
+
 function userId(c: { req: { header: (n: string) => string | undefined } }) {
-  return c.req.header("X-User-Id") ?? DEMO_USER_ID;
+  const raw = c.req.header("X-User-Id")?.trim();
+  if (raw && UUID_RE.test(raw)) return raw;
+  return UUID_RE.test(DEMO_USER_ID) ? DEMO_USER_ID : DEFAULT_DEMO_USER_ID;
 }
 
 /** Curated tips — fetch fully when source-filtered (not capped by timed window). */
@@ -103,44 +125,85 @@ function mergeCuratedFeedRows(
 }
 
 /** Food tips: keep Infatuation scores out of the title for rating badges. */
-function presentEvent<T extends { source: string; title: string; rawPayload?: unknown }>(
-  row: T,
-): T {
-  if (row.source !== "food") return row;
-  const payload = (row.rawPayload as Record<string, unknown> | null) ?? {};
+function presentEvent<
+  T extends {
+    source: string;
+    title: string;
+    imageUrl?: string | null;
+    rawPayload?: unknown;
+    lat?: number | null;
+    lng?: number | null;
+    venueName?: string | null;
+    address?: string | null;
+    city?: string | null;
+  },
+>(row: T): T {
+  const withImage =
+    row.source === "funcheap" && row.imageUrl
+      ? { ...row, imageUrl: upgradeFuncheapImageUrl(row.imageUrl) }
+      : row;
+  const coords = resolveEventCoords({
+    lat: withImage.lat,
+    lng: withImage.lng,
+    venueName: withImage.venueName,
+    title: withImage.title,
+    address: withImage.address,
+    city: withImage.city,
+  });
+  const withGeo =
+    coords.lat != null && coords.lng != null
+      ? { ...withImage, lat: coords.lat, lng: coords.lng }
+      : withImage;
+  if (withGeo.source !== "food") return withGeo;
+  const payload = (withGeo.rawPayload as Record<string, unknown> | null) ?? {};
   const rating = typeof payload.rating === "number" ? payload.rating : null;
   return {
-    ...row,
-    title: stripInfatuationRatingTitle(row.title, rating),
+    ...withGeo,
+    title: stripInfatuationRatingTitle(withGeo.title, rating),
   };
 }
 
-/** Find the cross-source twin for an RA or 19hz listing (shared ra.co URL). */
-async function findRaNineteenHzTwin(
+/** Find the cross-source twin for a ticket-platform or 19hz listing. */
+async function findMusicPlatformNineteenHzTwin(
   row: EventRow,
 ): Promise<EventRow | null> {
   if (row.source === "19hz") {
-    const raId = extractRaEventId(row.url);
-    if (!raId) return null;
+    const ref = extractMusicPlatformRef(row.url);
+    if (!ref) return null;
     const [twin] = await db
       .select()
       .from(events)
-      .where(and(eq(events.source, "ra"), eq(events.sourceEventId, raId)))
+      .where(
+        and(
+          eq(events.source, ref.platform),
+          eq(events.sourceEventId, ref.id),
+        ),
+      )
       .limit(1);
     return twin ?? null;
   }
 
-  if (row.source === "ra") {
-    if (row.url) {
-      const [byUrl] = await db
-        .select()
-        .from(events)
-        .where(and(eq(events.source, "19hz"), eq(events.url, row.url)))
-        .limit(1);
-      if (byUrl) return byUrl;
+  if (!isMusicTicketPlatform(row.source)) return null;
+
+  if (row.url) {
+    const [byUrl] = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.source, "19hz"), eq(events.url, row.url)))
+      .limit(1);
+    if (byUrl) return byUrl;
+  }
+
+  if (row.sourceEventId) {
+    let needle: string | null = null;
+    if (row.source === "ra") {
+      needle = `%ra.co/events/${row.sourceEventId}%`;
+    } else if (row.source === "eventbrite") {
+      needle = `%-tickets-${row.sourceEventId}%`;
+    } else if (row.source === "dice") {
+      needle = `%dice.fm%/event/${row.sourceEventId}%`;
     }
-    if (row.sourceEventId) {
-      const needle = `%ra.co/events/${row.sourceEventId}%`;
+    if (needle) {
       const [byId] = await db
         .select()
         .from(events)
@@ -192,11 +255,19 @@ app.get("/health", (c) => c.json({ ok: true, service: "bored-api" }));
 app.get("/v1/meta/taxonomy", (c) =>
   c.json({
     interests: INTEREST_CATEGORIES,
+    /** @deprecated Prefer `neighborhoodsByCity` — flat list is SF/Bay only. */
     neighborhoods: NEIGHBORHOODS,
+    neighborhoodsByCity: {
+      sf: NEIGHBORHOODS,
+      chicago: CHI_NEIGHBORHOODS,
+    },
     defaultLocation: SF_DEFAULT,
     locations: { sf: SF_DEFAULT, chicago: CHI_DEFAULT },
   }),
 );
+
+/** Nearest feed city from optional lat/lng, else request IP. */
+app.get("/v1/geo", async (c) => c.json(await resolveGeo(c)));
 
 app.get("/v1/me", async (c) => {
   const uid = userId(c);
@@ -287,7 +358,7 @@ app.get("/v1/events", async (c) => {
   let rows = await db
     .select()
     .from(events)
-    .where(gte(events.startsAt, now))
+    .where(and(gte(events.startsAt, now), eq(events.hidden, false)))
     .orderBy(asc(events.startsAt))
     .limit(limit * 2);
 
@@ -305,7 +376,7 @@ app.get("/v1/events/:id", async (c) => {
   const [row] = await db
     .select()
     .from(events)
-    .where(eq(events.id, c.req.param("id")))
+    .where(and(eq(events.id, c.req.param("id")), eq(events.hidden, false)))
     .limit(1);
   if (!row) return c.json({ error: "Not found" }, 404);
 
@@ -346,69 +417,102 @@ app.get("/v1/events/:id", async (c) => {
     }
   }
 
-  // RA ↔ 19hz: prefer RA lineup/flyer; enrich genre tags from 19hz twin.
-  if (row.source === "19hz" || row.source === "ra") {
-    const twin = await findRaNineteenHzTwin(row);
+  // Ticket platform ↔ 19hz: prefer platform flyer/copy; enrich tags from 19hz.
+  if (row.source === "19hz" || isMusicTicketPlatform(row.source)) {
+    const twin = await findMusicPlatformNineteenHzTwin(row);
     if (twin) {
-      const merged =
-        row.source === "ra"
-          ? mergeRaWithNineteenHz(row, twin)
-          : mergeRaWithNineteenHz(twin, row);
+      const merged = isMusicTicketPlatform(row.source)
+        ? mergePlatformWithNineteenHz(row, twin)
+        : mergePlatformWithNineteenHz(twin, row);
       return c.json(presentEvent(merged));
+    }
+  }
+
+  // 19hz listings are text-only tables — pull flyer from the ticket URL.
+  if (row.source === "19hz" && !row.imageUrl && row.url) {
+    try {
+      const { enrichNineteenHzEventImage } = await import("@bored/ingest");
+      const imageUrl = await enrichNineteenHzEventImage(row.url);
+      if (imageUrl) {
+        const [updated] = await db
+          .update(events)
+          .set({ imageUrl })
+          .where(eq(events.id, row.id))
+          .returning();
+        if (updated) return c.json(presentEvent(updated));
+      }
+    } catch (err) {
+      console.warn("[events/:id] 19hz image enrich failed", err);
     }
   }
 
   // Funcheap: pull blurb, poster, categories + external "Event Details" link.
   if (row.source === "funcheap") {
     const payload = (row.rawPayload as Record<string, unknown> | null) ?? {};
-    const funcheapPage =
-      typeof payload.sourcePageUrl === "string" && payload.sourcePageUrl
-        ? payload.sourcePageUrl
-        : row.url && /funcheap\.com/i.test(row.url)
-          ? row.url
-          : null;
-    const cats = (row.categories as string[]) ?? [];
-    const sparseCategories =
-      cats.length === 0 || (cats.length === 1 && cats[0] === "free");
-    const needsEnrich =
-      funcheapPage &&
-      (!row.description ||
-        !row.imageUrl ||
-        sparseCategories ||
-        !(row.tags as string[])?.some((t) => t !== "funcheap" && t !== "rss"));
-    if (needsEnrich) {
-      try {
-        const { enrichFuncheapEvent } = await import("@bored/ingest");
+    try {
+      const {
+        enrichFuncheapEvent,
+        funcheapDescriptionNeedsEnrich,
+        resolveFuncheapSourcePageUrl,
+      } = await import("@bored/ingest");
+      const funcheapPage = resolveFuncheapSourcePageUrl(row.url, payload);
+      const cats = (row.categories as string[]) ?? [];
+      const sparseCategories =
+        cats.length === 0 || (cats.length === 1 && cats[0] === "free");
+      const needsEnrich =
+        funcheapPage &&
+        (funcheapDescriptionNeedsEnrich(row.description) ||
+          !row.imageUrl ||
+          sparseCategories ||
+          !(row.tags as string[])?.some((t) => t !== "funcheap" && t !== "rss"));
+      if (needsEnrich) {
         const fresh = await enrichFuncheapEvent(funcheapPage, {
           title: row.title,
         });
         if (fresh) {
+          const mergedPayload = {
+            ...payload,
+            sourcePageUrl: fresh.sourcePageUrl,
+            eventDetailsUrl: fresh.eventDetailsUrl,
+            enrichedAt: new Date().toISOString(),
+          };
+          const coords = resolveEventCoords({
+            lat: row.lat,
+            lng: row.lng,
+            venueName: fresh.venueName ?? row.venueName,
+            title: row.title,
+            address: fresh.address ?? row.address,
+            city: row.city,
+          });
+          const patch = {
+            description: fresh.description ?? row.description,
+            url: fresh.eventDetailsUrl ?? row.url,
+            venueName: fresh.venueName ?? row.venueName,
+            address: fresh.address ?? row.address,
+            neighborhood: fresh.neighborhood ?? row.neighborhood,
+            ...(coords.lat != null && coords.lng != null
+              ? { lat: coords.lat, lng: coords.lng }
+              : {}),
+            // Never persist ShortPixel SVG placeholders over a real thumb.
+            imageUrl:
+              upgradeFuncheapImageUrl(fresh.imageUrl) ??
+              upgradeFuncheapImageUrl(row.imageUrl) ??
+              row.imageUrl,
+            categories:
+              fresh.categories.length > 0 ? fresh.categories : row.categories,
+            tags: fresh.tags.length > 0 ? fresh.tags : row.tags,
+            rawPayload: mergedPayload,
+          };
           const [updated] = await db
             .update(events)
-            .set({
-              description: fresh.description ?? row.description,
-              url: fresh.eventDetailsUrl ?? row.url,
-              venueName: fresh.venueName ?? row.venueName,
-              address: fresh.address ?? row.address,
-              neighborhood: fresh.neighborhood ?? row.neighborhood,
-              imageUrl: fresh.imageUrl ?? row.imageUrl,
-              categories:
-                fresh.categories.length > 0 ? fresh.categories : row.categories,
-              tags: fresh.tags.length > 0 ? fresh.tags : row.tags,
-              rawPayload: {
-                ...payload,
-                sourcePageUrl: fresh.sourcePageUrl,
-                eventDetailsUrl: fresh.eventDetailsUrl,
-                enrichedAt: new Date().toISOString(),
-              },
-            })
+            .set(patch)
             .where(eq(events.id, row.id))
             .returning();
-          if (updated) return c.json(presentEvent(updated));
+          return c.json(presentEvent(updated ?? { ...row, ...patch }));
         }
-      } catch (err) {
-        console.warn("[events/:id] funcheap enrich failed", err);
       }
+    } catch (err) {
+      console.warn("[events/:id] funcheap enrich failed", err);
     }
   }
 
@@ -573,6 +677,7 @@ app.get("/v1/feed", async (c) => {
   try {
   const uid = userId(c);
   const rawDate = parseFeedDate(c.req.query("date"));
+  const hasSourcesQuery = Boolean(c.req.query("sources")?.trim());
   const query = FeedQuerySchema.parse({
     mode: c.req.query("mode") ?? "for_you",
     area: c.req.query("area") ?? "bay",
@@ -586,7 +691,13 @@ app.get("/v1/feed", async (c) => {
     date: rawDate ?? undefined,
     limit:
       c.req.query("limit") ??
-      (c.req.query("mode") === "all" || rawDate ? 200 : 40),
+      (c.req.query("mode") === "date" ||
+      c.req.query("mode") === "all" ||
+      c.req.query("mode") === "today" ||
+      rawDate ||
+      hasSourcesQuery
+        ? 200
+        : 40),
   });
 
   const prefs = await getPrefs(uid);
@@ -606,8 +717,20 @@ app.get("/v1/feed", async (c) => {
     prefs.radiusMiles = 25;
   }
 
+  const topicFilter = parseFeedTopics(query.topics);
+  const sourceFilter = (() => {
+    const selected = parseEventSources(query.sources);
+    if (!selected.length) return null;
+    return expandSourceFilter(selected);
+  })();
+  // Source chips mean “browse this calendar”, not a personalized top-N cull.
+  const browsingSources = Boolean(sourceFilter);
+
   const now = new Date();
-  const dayDate = parseFeedDate(query.date);
+  const todayKey = dayKey(now, locDefault.timezone);
+  const dayDate =
+    parseFeedDate(query.date) ??
+    (query.mode === "today" ? todayKey : null);
   let windowStart = now;
   let windowEnd = new Date(now);
   let exclusiveEnd = false;
@@ -619,31 +742,22 @@ app.get("/v1/feed", async (c) => {
     windowStart = bounds.start;
     windowEnd = bounds.end;
     exclusiveEnd = true;
-  } else if (query.mode === "tonight") {
-    windowEnd.setHours(23, 59, 59, 999);
-    if (windowEnd.getTime() - now.getTime() < 3 * 3600000) {
-      windowEnd = new Date(now.getTime() + 18 * 3600000);
-    }
   } else if (query.mode === "weekend") {
     windowEnd = new Date(now.getTime() + 5 * 86400000);
-  } else if (query.mode === "all") {
-    windowEnd = new Date(now.getTime() + 30 * 86400000);
+  } else if (query.mode === "date" || browsingSources) {
+    // Source browse: Partiful (and peers) list events months out — don't clip at 14d.
+    windowEnd = new Date(
+      now.getTime() + (browsingSources ? 90 : 30) * 86400000,
+    );
   } else {
     windowEnd = new Date(now.getTime() + 14 * 86400000);
   }
 
-  const fetchLimit = query.mode === "all" || dayDate ? 500 : 300;
+  const fetchLimit =
+    query.mode === "date" || dayDate || browsingSources ? 500 : 300;
   const startsInWindow = exclusiveEnd
     ? and(gte(events.startsAt, windowStart), lt(events.startsAt, windowEnd))
     : and(gte(events.startsAt, windowStart), lte(events.startsAt, windowEnd));
-
-  const topicFilter = parseFeedTopics(query.topics);
-
-  const sourceFilter = (() => {
-    const selected = parseEventSources(query.sources);
-    if (!selected.length) return null;
-    return expandSourceFilter(selected);
-  })();
 
   const curatedSourceSet = new Set<string>();
   if (sourceFilter) {
@@ -683,15 +797,26 @@ app.get("/v1/feed", async (c) => {
 
   let eventRows: EventRow[] = [];
   if (needsTimedQuery) {
+    const timedSources = sourceFilter
+      ? [...sourceFilter].filter(
+          (s) => !(CURATED_FEED_SOURCES as readonly string[]).includes(s),
+        )
+      : null;
     eventRows = await db
       .select()
       .from(events)
       .where(
         and(
           startsInWindow,
+          eq(events.hidden, false),
           notInArray(events.source, [...CURATED_ONLY_TIMED_SOURCES]),
           // Evergreen tips use kind=recommendation (also excluded by source).
           sql`${events.kind} <> 'recommendation'`,
+          // Push source chip into SQL so denser calendars don't crowd out
+          // Partiful / newsletter / etc. inside the fetch limit.
+          timedSources?.length
+            ? inArray(events.source, timedSources)
+            : undefined,
         ),
       )
       .orderBy(asc(events.startsAt))
@@ -703,7 +828,9 @@ app.get("/v1/feed", async (c) => {
       await db
         .select()
         .from(events)
-        .where(inArray(events.source, curatedInFilter))
+        .where(
+          and(inArray(events.source, curatedInFilter), eq(events.hidden, false)),
+        )
         .orderBy(asc(events.title)),
       query.area,
       { now },
@@ -715,14 +842,18 @@ app.get("/v1/feed", async (c) => {
     ? query.categories.split(",").map((s) => s.trim()).filter(Boolean)
     : null;
 
-  // Collapse RA + 19hz duplicates when RA is in play (shared ra.co URL).
-  // Prefer RA lineup/flyer; pull genre tags from the 19hz twin. Skip when the
-  // user filtered to 19hz-only so those cards aren't dropped.
-  const wantsRa = !sourceFilter || sourceFilter.has("ra");
+  // Collapse 19hz duplicates when RA / Eventbrite / Dice is in play (shared
+  // ticket URL/id). Prefer platform flyer/copy; pull genre tags from 19hz.
+  // Skip when the user filtered to 19hz-only so those cards aren't dropped.
+  const wantsPlatformTwin =
+    !sourceFilter ||
+    MUSIC_TICKET_PLATFORMS.some((platform) => sourceFilter.has(platform));
   const coalescedRows = expandRecurringRowsForFeed(
     expandFoodDealRowsForFeed(
       coalesceEventOccurrences(
-        wantsRa ? coalesceRaNineteenHz(eventRows) : eventRows,
+        wantsPlatformTwin
+          ? coalesceMusicPlatformNineteenHz(eventRows)
+          : eventRows,
       ),
       {
         mode: query.mode,
@@ -856,6 +987,15 @@ app.get("/v1/feed", async (c) => {
                   })
               : null;
 
+      const coords = resolveEventCoords({
+        lat: e.lat,
+        lng: e.lng,
+        venueName: e.venueName,
+        title,
+        address: e.address,
+        city: e.city,
+      });
+
       return {
         id: e.id,
         kind: resolveEventKind({
@@ -868,13 +1008,16 @@ app.get("/v1/feed", async (c) => {
         tags,
         startsAt: e.startsAt,
         endsAt: e.endsAt,
-        lat: e.lat,
-        lng: e.lng,
+        lat: coords.lat,
+        lng: coords.lng,
         isFree: e.isFree,
         priceMin: e.priceMin,
         neighborhood: e.neighborhood,
         venueName: e.venueName,
-        imageUrl: e.imageUrl,
+        imageUrl:
+          e.source === "funcheap"
+            ? upgradeFuncheapImageUrl(e.imageUrl)
+            : e.imageUrl,
         url: e.url,
         subtitle: e.venueName,
         city: e.city,
@@ -883,7 +1026,9 @@ app.get("/v1/feed", async (c) => {
         sourceTrust:
           e.source === "recurring"
             ? 0.75
-            : isFoodDeal
+            : e.source === "partiful" && tags.includes("trending")
+              ? 0.95
+              : isFoodDeal
               ? 0.92
               : isNewRestaurant
                 ? 0.9
@@ -896,6 +1041,9 @@ app.get("/v1/feed", async (c) => {
           infatuationRating != null
             ? { infatuation: infatuationRating }
             : undefined,
+        isSponsored: Boolean(e.isSponsored),
+        boostWeight: e.boostWeight ?? 1,
+        sponsorEndsAt: e.sponsorEndsAt ?? null,
       };
     });
 
@@ -1016,19 +1164,68 @@ app.get("/v1/feed", async (c) => {
       .map((s) => (s.targetKind === "film" ? `film:${s.targetId}` : s.targetId)),
   );
 
-  const chronological = query.mode === "all" || Boolean(dayDate);
-  const cards = rankFeed(
-    rankables,
-    {
-      prefs,
-      now,
-      dismissedIds,
-      savedBoostIds,
-      showAll: chronological,
-    },
-    chronological ? "all" : query.mode,
-    query.limit,
-  );
+  // Chronological listing when browsing a source, Select Date, or a calendar
+  // day (including Today) so preferFree / budget / affinity slots don't hide
+  // most of that source.
+  const chronological =
+    query.mode === "date" ||
+    query.mode === "today" ||
+    Boolean(dayDate) ||
+    browsingSources;
+  // For You + topic: Today → weekend → horizon so thin topics still fill.
+  const topicForYou =
+    query.mode === "for_you" && topicFilter.length > 0 && !chronological;
+  const rankMode = chronological ? "date" : query.mode;
+
+  const organicRankables = rankables.filter((r) => !isSponsoredActive(r, now));
+  const sponsoredRankables = rankables.filter((r) => isSponsoredActive(r, now));
+
+  const rankCtx = {
+    prefs,
+    now,
+    dismissedIds,
+    savedBoostIds,
+    showAll: chronological,
+  };
+
+  const organicCards = topicForYou
+    ? rankForYouTopicFeed(
+        organicRankables,
+        { ...rankCtx, timeZone: locDefault.timezone },
+        query.limit,
+      )
+    : rankFeed(organicRankables, rankCtx, rankMode, query.limit);
+
+  const sponsoredCards = (
+    topicForYou
+      ? rankForYouTopicFeed(
+          sponsoredRankables,
+          { ...rankCtx, timeZone: locDefault.timezone },
+          Math.max(8, Math.ceil(query.limit * 0.2)),
+        )
+      : rankFeed(
+          sponsoredRankables,
+          rankCtx,
+          rankMode,
+          Math.max(8, Math.ceil(query.limit * 0.2)),
+        )
+  ).map((c) => ({ ...c, isSponsored: true }));
+
+  // Today / weekend / Select Date / topic-browse For You: lead with sponsored
+  // when inventory exists. Plain For you: keep organic in the first few cards.
+  const firstIndex =
+    chronological ||
+    topicForYou ||
+    query.mode === "today" ||
+    query.mode === "weekend"
+      ? 0
+      : 3;
+
+  const cards = injectSponsoredIntoFeed(organicCards, sponsoredCards, {
+    firstIndex,
+    interval: 8,
+    maxShare: 0.12,
+  }).slice(0, query.limit);
 
   return c.json({
     mode: query.mode,
@@ -1175,10 +1372,16 @@ app.get("/r/s/:showtimeId", async (c) => {
   return c.redirect(rewritten.url, 302);
 });
 
-const port = Number(process.env.API_PORT ?? 4000);
+// Railway / containers set PORT; local dev uses API_PORT (default 4000).
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 
-serve({ fetch: app.fetch, port }, () => {
-  console.log(`bored api listening on :${port}`);
+const server = serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`bored api listening on :${info.port}`);
+});
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  console.error(`[api] failed to bind :${port}: ${err.message}`);
+  process.exit(1);
 });
 
 export default app;

@@ -4,12 +4,18 @@ import {
   INTEREST_CATEGORIES,
   INTEREST_LABELS,
   MUSIC_GENRE_CATEGORIES,
-  NEIGHBORHOODS,
+  defaultAreaForCity,
+  defaultNeighborhoodsForCity,
+  locationDefaultForArea,
+  metroFromArea,
+  neighborhoodsForCity,
+  type FeedCity,
 } from "@bored/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { feedHomeHref, readFeedPrefs } from "@/lib/feed-prefs";
 
 const MUSIC_GENRE_SET = new Set<string>(MUSIC_GENRE_CATEGORIES);
 
@@ -18,17 +24,39 @@ const CORE_INTERESTS = INTEREST_CATEGORIES.filter(
   (c) => !MUSIC_GENRE_SET.has(c),
 );
 
+function resolveOnboardingCity(): FeedCity {
+  const prefs = readFeedPrefs();
+  return prefs ? metroFromArea(prefs.area) : "sf";
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
+  const [city, setCity] = useState<FeedCity>("sf");
   const [selected, setSelected] = useState<string[]>([]);
   const [neighborhoods, setNeighborhoods] = useState<string[]>([]);
+  /** Prefs from other metros — preserved on save so CHI edits don’t wipe SF. */
+  const [otherMetroNeighborhoods, setOtherMetroNeighborhoods] = useState<
+    string[]
+  >([]);
   const [budgetMax, setBudgetMax] = useState(50);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savedOk, setSavedOk] = useState(false);
 
+  const neighborhoodOptions = useMemo(
+    () => neighborhoodsForCity(city),
+    [city],
+  );
+
+  const cityLabel = city === "chicago" ? "Chicago" : "SF / Bay";
+
   useEffect(() => {
+    const activeCity = resolveOnboardingCity();
+    setCity(activeCity);
+    const hoodOptions = new Set(neighborhoodsForCity(activeCity));
+    const defaults = defaultNeighborhoodsForCity(activeCity);
+
     void api<{
       prefs: {
         interests: { category: string; weight: number }[];
@@ -43,11 +71,11 @@ export default function OnboardingPage() {
             ? cats
             : ["music.electronic", "comedy.underground", "movies.arthouse"],
         );
-        setNeighborhoods(
-          me.prefs.neighborhoods.length
-            ? me.prefs.neighborhoods
-            : ["Mission", "North Beach"],
+        const kept = me.prefs.neighborhoods.filter((n) => hoodOptions.has(n));
+        setOtherMetroNeighborhoods(
+          me.prefs.neighborhoods.filter((n) => !hoodOptions.has(n)),
         );
+        setNeighborhoods(kept.length ? kept : defaults);
         if (me.prefs.budgetMax != null) setBudgetMax(me.prefs.budgetMax);
       })
       .catch(() => {
@@ -56,7 +84,8 @@ export default function OnboardingPage() {
           "comedy.underground",
           "movies.arthouse",
         ]);
-        setNeighborhoods(["Mission", "North Beach"]);
+        setOtherMetroNeighborhoods([]);
+        setNeighborhoods(defaults);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -85,22 +114,23 @@ export default function OnboardingPage() {
     setSaving(true);
     setError(null);
     setSavedOk(false);
+    const loc = locationDefaultForArea(defaultAreaForCity(city));
     try {
       await api("/v1/me/interests", {
         method: "PUT",
         body: JSON.stringify({
           interests,
-          neighborhoods,
+          neighborhoods: [...otherMetroNeighborhoods, ...neighborhoods],
           budgetMax,
           preferFree: selected.includes("free"),
           nightsOut: true,
-          radiusMiles: 35,
-          lat: 37.7749,
-          lng: -122.4194,
+          radiusMiles: loc.radiusMiles,
+          lat: loc.lat,
+          lng: loc.lng,
         }),
       });
       setSavedOk(true);
-      router.push("/?mode=for_you&area=bay");
+      router.push(feedHomeHref("for_you"));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -116,7 +146,15 @@ export default function OnboardingPage() {
   return (
     <>
       <div className="topbar">
-        <Link href="/?mode=for_you">← Back</Link>
+        <Link
+          href={feedHomeHref("for_you")}
+          onClick={(e) => {
+            e.preventDefault();
+            router.push(feedHomeHref("for_you"));
+          }}
+        >
+          ← Back
+        </Link>
       </div>
       <header className="hero">
         <p className="eyebrow">Onboarding</p>
@@ -175,8 +213,11 @@ export default function OnboardingPage() {
         <h2 className="section-title" style={{ marginTop: 0 }}>
           Neighborhoods
         </h2>
+        <p className="muted" style={{ marginTop: -4, marginBottom: 12 }}>
+          {cityLabel} — switch city on the feed to edit the other metro.
+        </p>
         <div className="grid-pills">
-          {NEIGHBORHOODS.map((n) => (
+          {neighborhoodOptions.map((n) => (
             <button
               key={n}
               type="button"

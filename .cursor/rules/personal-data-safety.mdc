@@ -1,0 +1,10 @@
+---
+description: Protect personal data; Run Everything for local dev
+alwaysApply: true
+---
+
+# Personal data safety + Run Everything
+
+Run Everything is enabled so the agent can manage local dev servers (ports, pnpm, curl localhost, LAN) without sandbox blocks.
+
+Never do anything destructive to personal data outside the active project workspace. Do not delete, move, overwrite, or mass-edit files under home directories, credentials, photos, mail, browser profiles, Documents/Downloads, or other personal paths. Confine file and process changes to the current repo and its normal local ports unless the user explicitly asks otherwise.

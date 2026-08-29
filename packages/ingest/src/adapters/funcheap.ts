@@ -1,5 +1,9 @@
 import * as cheerio from "cheerio";
 import {
+  unwrapFuncheapLazyImageUrl,
+  upgradeFuncheapImageUrl,
+} from "@bored/shared";
+import {
   contentHash,
   fetchText,
   parsePrice,
@@ -137,22 +141,16 @@ function parseListingPage(html: string): NormalizedEvent[] {
     const thumb = node.find(".thumbnail-wrapper img").first();
     if (thumb.length) {
       const src = thumb.attr("src") ?? "";
-      if (src.startsWith("data:image/svg")) {
-        try {
-          const b64 = src.replace(/^data:image\/svg\+xml;base64,/, "");
-          const decoded = Buffer.from(b64, "base64").toString("utf8");
-          const dataU = decoded.match(/data-u="([^"]+)"/)?.[1];
-          if (dataU) imageUrl = normalizeFuncheapCdnUrl(decodeURIComponent(dataU));
-        } catch {
-          /* ignore malformed placeholder */
-        }
-      }
+      const fromLazy = unwrapFuncheapLazyImageUrl(src);
+      if (fromLazy) imageUrl = normalizeFuncheapCdnUrl(fromLazy);
       if (!imageUrl) {
-        const noscriptSrc = thumb.parent().find("noscript img").attr("src")?.trim();
+        const noscriptSrc =
+          thumb.next("noscript").find("img").attr("src")?.trim() ||
+          thumb.parent().find("noscript img").attr("src")?.trim();
         if (noscriptSrc) imageUrl = normalizeFuncheapCdnUrl(noscriptSrc);
       }
-      if (!imageUrl && src && !src.startsWith("data:")) {
-        imageUrl = normalizeFuncheapCdnUrl(src);
+      if (!imageUrl && src) {
+        imageUrl = normalizeFuncheapCdnUrl(src) || null;
       }
     }
 
@@ -374,23 +372,49 @@ export function funcheapTaxonomy(
 /** Prefer direct cdn.funcheap.com URLs over ShortPixel proxy paths. */
 export function normalizeFuncheapCdnUrl(url: string): string {
   const trimmed = url.trim();
-  if (!trimmed) return trimmed;
+  if (!trimmed) return "";
 
-  const uploadPath = trimmed.match(
-    /(?:cdn\.funcheap\.com|sf\.funcheap\.com)(\/wp-content\/uploads\/[^?]+)/i,
-  )?.[1];
-  if (uploadPath) return `https://cdn.funcheap.com${uploadPath}`;
+  const unwrapped = unwrapFuncheapLazyImageUrl(trimmed);
+  const candidate = unwrapped ?? (trimmed.startsWith("data:") ? "" : trimmed);
+  if (!candidate) return "";
 
-  if (/img\.evbuc\.com|evbuc\.com/i.test(trimmed)) {
+  if (/img\.evbuc\.com|evbuc\.com/i.test(candidate)) {
     try {
-      const parsed = new URL(trimmed);
-      return parsed.toString();
+      return new URL(candidate).toString();
     } catch {
-      return trimmed;
+      return candidate;
     }
   }
 
-  return trimmed;
+  return upgradeFuncheapImageUrl(candidate) ?? "";
+}
+
+/** Resolve a Funcheap post hero from og:image / featured img / noscript fallback. */
+function extractFuncheapPostImage($: cheerio.CheerioAPI): string | null {
+  const og = $('meta[property="og:image"]').attr("content")?.trim();
+  if (og) {
+    const fromOg = normalizeFuncheapCdnUrl(og);
+    if (fromOg) return fromOg;
+  }
+
+  for (const sel of ["img.wp-post-image", "img.attachment-post-thumbnail"]) {
+    const img = $(sel).first();
+    if (!img.length) continue;
+    const src = img.attr("src")?.trim() ?? "";
+    if (src) {
+      const fromSrc = normalizeFuncheapCdnUrl(src);
+      if (fromSrc) return fromSrc;
+    }
+    const noscriptSrc =
+      img.next("noscript").find("img").attr("src")?.trim() ||
+      img.parent().find("noscript img").attr("src")?.trim();
+    if (noscriptSrc) {
+      const fromNoscript = normalizeFuncheapCdnUrl(noscriptSrc);
+      if (fromNoscript) return fromNoscript;
+    }
+  }
+
+  return null;
 }
 
 async function backfillFuncheapImages(
@@ -422,12 +446,7 @@ export async function fetchFuncheapPostImage(pageUrl: string): Promise<string | 
   if (!/funcheap\.com/i.test(pageUrl)) return null;
   const html = await fetchText(pageUrl);
   const $ = cheerio.load(html);
-  const raw =
-    $('meta[property="og:image"]').attr("content")?.trim() ||
-    $("img.wp-post-image").attr("src")?.trim() ||
-    $("img.attachment-post-thumbnail").attr("src")?.trim() ||
-    null;
-  return raw && !raw.startsWith("data:") ? normalizeFuncheapCdnUrl(raw) : null;
+  return extractFuncheapPostImage($);
 }
 
 export type EventbriteEnrichment = {
@@ -507,6 +526,64 @@ function inferCity(classes: string, title: string): string {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * ShortPixel (and similar) leave a full `<img …>` inside `<noscript>`.
+ * Cheerio `.text()` treats that markup as visible text — strip media/script
+ * nodes before reading, then reject leftover HTML blobs.
+ */
+function entryParagraphText($: cheerio.CheerioAPI, el: unknown): string {
+  const clone = $(el as never).clone();
+  clone
+    .find("noscript, script, style, img, iframe, svg, figure, video, picture")
+    .remove();
+  return decodeEntities(clone.text().replace(/\s+/g, " ").trim());
+}
+
+const FUNCHEAP_ORGANIZER_BOILERPLATE = /^submitted by the event organizer$/i;
+
+/** Resolve the Funcheap post URL for lazy detail enrichment. */
+export function resolveFuncheapSourcePageUrl(
+  url: string | null | undefined,
+  rawPayload: Record<string, unknown> | null | undefined,
+): string | null {
+  const payload = rawPayload ?? {};
+  for (const key of ["sourcePageUrl", "link"] as const) {
+    const candidate = payload[key];
+    if (typeof candidate === "string" && /funcheap\.com/i.test(candidate.trim())) {
+      return candidate.trim();
+    }
+  }
+  if (typeof url === "string" && /funcheap\.com/i.test(url.trim())) {
+    return url.trim();
+  }
+  return null;
+}
+
+export function funcheapDescriptionNeedsEnrich(
+  description: string | null | undefined,
+): boolean {
+  const desc = description?.trim() ?? "";
+  if (!desc) return true;
+  if (FUNCHEAP_ORGANIZER_BOILERPLATE.test(desc)) return true;
+  if (desc.length < 60) return true;
+  if (/[<>]|srcset=|wp-image-|decoding="async"|fetchpriority=/i.test(desc)) {
+    return true;
+  }
+  return false;
+}
+
+function isFuncheapArticleParagraph(text: string): boolean {
+  if (text.length < 25) return false;
+  if (FUNCHEAP_ORGANIZER_BOILERPLATE.test(text.trim())) return false;
+  // Noscript fallbacks / leaked markup (mirrors chicagoCheap)
+  if (/[<>]|srcset=|wp-image-|decoding="async"|fetchpriority=/i.test(text)) {
+    return false;
+  }
+  if (/^share\b|facebook|twitter|related posts/i.test(text)) return false;
+  if (/^disclaimer:/i.test(text)) return false;
+  return true;
 }
 
 function decodeEntities(s: string): string {
@@ -610,18 +687,25 @@ export async function enrichFuncheapEvent(
 
   const paras: string[] = [];
   $(".entry.clearfloat p, .entry-content p, .entry p").each((_, el) => {
-    const text = decodeEntities($(el).text().replace(/\s+/g, " ").trim());
-    if (text.length < 25) return;
-    if (/^share\b|facebook|twitter|related posts/i.test(text)) return;
-    if (/^disclaimer:/i.test(text)) return;
+    if ($(el).closest("blockquote.submitted-organizer").length) return;
+    const text = entryParagraphText($, el);
+    if (!isFuncheapArticleParagraph(text)) return;
     paras.push(text);
   });
 
   let description =
     paras.length > 0 ? paras.slice(0, 6).join("\n\n") : null;
+  if (description) {
+    description = description
+      .replace(/^Submitted by the Event Organizer\s*\n+/i, "")
+      .trim();
+  }
   if (!description) {
     const og = $('meta[property="og:description"]').attr("content")?.trim();
     description = og ? decodeEntities(og) : null;
+  }
+  if (description && /<[a-z][\s\S]*>/i.test(description)) {
+    description = null;
   }
   if (description && description.length > 4000) {
     description = description.slice(0, 4000);
@@ -652,15 +736,7 @@ export async function enrichFuncheapEvent(
     if (m) address = m[1]!.replace(/\s+/g, " ").trim().replace(/\.$/, "");
   }
 
-  const imageUrl =
-    normalizeFuncheapCdnUrl(
-      $('meta[property="og:image"]').attr("content")?.trim() ?? "",
-    ) ||
-    normalizeFuncheapCdnUrl($("img.wp-post-image").attr("src")?.trim() ?? "") ||
-    normalizeFuncheapCdnUrl(
-      $("img.attachment-post-thumbnail").attr("src")?.trim() ?? "",
-    ) ||
-    null;
+  const imageUrl = extractFuncheapPostImage($);
 
   const title =
     opts?.title?.trim() ||

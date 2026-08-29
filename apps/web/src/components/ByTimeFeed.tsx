@@ -122,7 +122,6 @@ function TimelineRow({
           <TimelineThumbMedia
             imageUrl={card.imageUrl}
             eventType={eventType}
-            useTypedPlaceholder={isEvergreenTip}
           />
         )}
         <div className="timeline-row__copy">

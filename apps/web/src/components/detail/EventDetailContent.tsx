@@ -4,6 +4,8 @@ import {
   activityRecommendationLabel,
   activityTipFallbackLabel,
   categoryLabel,
+  eventDetailImageUrl,
+  eventHeroImageFit,
   eventOccurrences,
   foodDealRecommendationLabel,
   foodDealScheduleFromPayload,
@@ -18,12 +20,16 @@ import {
   isFoodRecommendationSource,
   isHappeningNow,
   isInstagramVideo,
+  isMusicListing,
   isNewRestaurantRecommendationSource,
+  isSponsoredActive,
+  isSportsListing,
   newRestaurantRecommendationLabel,
   newRestaurantTipFallbackLabel,
   parseLineupArtists,
   registrationStatusLabel,
   resolveEventOutboundDestinations,
+  resolveSportsTeamRows,
   sourceLabel,
   stripInfatuationRatingTitle,
 } from "@bored/shared";
@@ -128,7 +134,27 @@ export function EventDetailContent({
   const showOccurrenceTimes = occurrenceTimes.length > 1;
 
   const genreChips = genreTagsForDisplay(event.tags, compact ? 6 : 8);
-  const lineup = resolveLineupArtists(event);
+  const sports = isSportsListing({
+    categories: event.categories,
+    tags: event.tags,
+    title: event.title,
+    venueName: event.venueName,
+    source: event.source,
+  });
+  const music = isMusicListing({
+    categories: event.categories,
+    tags: event.tags,
+    title: event.title,
+    venueName: event.venueName,
+    source: event.source,
+  });
+  const lineup = music ? resolveLineupArtists(event) : [];
+  const sportsTeams = sports
+    ? resolveSportsTeamRows({
+        title: event.title,
+        rawPayload: event.rawPayload,
+      })
+    : [];
   const categoryLine = event.categories
     .filter((c) => {
       if (c === "free") return false;
@@ -198,15 +224,21 @@ export function EventDetailContent({
               : "View on Instagram"
             : event.source === "ra"
             ? "View on RA"
-            : event.source === "funcheap" &&
-                primaryUrl &&
-                !/funcheap\.com/i.test(primaryUrl)
-              ? "Event details"
-              : event.source === "do312" && eventDetailsUrl
-                ? "Event website"
-                : event.source === "do312"
-                  ? "View on Do312"
-                  : "Open source";
+            : sports &&
+                (event.source === "ticketmaster" ||
+                  /ticketmaster\.|livenation\./i.test(primaryUrl ?? ""))
+              ? "Get tickets"
+              : event.source === "funcheap" &&
+                  primaryUrl &&
+                  !/funcheap\.com/i.test(primaryUrl)
+                ? "Event details"
+                : event.source === "do312" && eventDetailsUrl
+                  ? "Event website"
+                  : event.source === "do312"
+                    ? "View on Do312"
+                    : event.source === "ticketmaster"
+                      ? "View on Ticketmaster"
+                      : "Open source";
 
   const secondaryCtaLabel =
     event.source === "do312"
@@ -358,14 +390,29 @@ export function EventDetailContent({
     typeof event.rawPayload?.mediaUrl === "string"
       ? event.rawPayload.mediaUrl
       : null;
+  const heroImageUrl = eventDetailImageUrl({
+    source: event.source,
+    imageUrl: event.imageUrl,
+    rawPayload: event.rawPayload,
+  });
+  const heroImageFit =
+    eventHeroImageFit({
+      source: event.source,
+      rawPayload: event.rawPayload,
+    }) ?? undefined;
   const hasLocation = eventHasLocation(event);
   const mapsEmbedSrc = hasLocation ? googleMapsEmbedSrc(event) : null;
   const mapsLink = hasLocation ? googleMapsLink(event) : null;
+  const showSponsored = isSponsoredActive({
+    isSponsored: event.isSponsored,
+    sponsorEndsAt: event.sponsorEndsAt,
+  });
 
   return (
     <div className={`detail-body ${compact ? "is-compact" : ""}`}>
       <div className="detail-body__meta-row">
         <span className="badge source">{sourceLabel(event.source)}</span>
+        {showSponsored && <span className="badge sponsored">Sponsored</span>}
         {infatuationRating != null && (
           <span className="badge rating-infatuation">
             Infatuation {Number(infatuationRating).toFixed(1)}
@@ -473,9 +520,10 @@ export function EventDetailContent({
           posterUrl={event.imageUrl}
           mediaUrl={instagramMediaUrl}
         />
-      ) : event.imageUrl || isEvergreenTip ? (
+      ) : (
         <DetailHeroMedia
-          imageUrl={event.imageUrl}
+          imageUrl={heroImageUrl}
+          fit={heroImageFit}
           eventType={cardEventType({
             categories: event.categories,
             tags: event.tags,
@@ -492,7 +540,7 @@ export function EventDetailContent({
             recommendationLabel,
           })}
         />
-      ) : null}
+      )}
 
       <div className="panel detail-body__panel">
         {hasLocation ? (
@@ -543,6 +591,38 @@ export function EventDetailContent({
           <p className="meta" style={{ marginTop: 8 }}>
             {priceLine}
           </p>
+        )}
+        {sportsTeams.length > 0 && (
+          <div className="detail-body__lineup" style={{ marginTop: 14 }}>
+            <p className="eyebrow" style={{ marginBottom: 6 }}>
+              Teams
+            </p>
+            <p className="meta detail-body__lineup-hint">
+              Official site and Instagram.
+            </p>
+            <ul className="detail-body__lineup-list">
+              {sportsTeams.map((team) => (
+                <li key={team.name} className="detail-body__lineup-artist">
+                  <span className="detail-body__lineup-name">{team.name}</span>
+                  {team.links.length > 0 ? (
+                    <span className="detail-body__lineup-listen">
+                      {team.links.map((link) => (
+                        <a
+                          key={link.kind}
+                          className="detail-body__team-link"
+                          href={link.href}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {link.label}
+                        </a>
+                      ))}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {lineup.length > 0 && (
           <div className="detail-body__lineup" style={{ marginTop: 14 }}>
@@ -662,16 +742,23 @@ function formatPublishedLabel(iso: string | null | undefined): string | null {
 }
 
 function resolveLineupArtists(event: EventDetail): string[] {
+  // Music only — sports/comedy attractions must not get Spotify listen links.
+  if (
+    !isMusicListing({
+      categories: event.categories,
+      tags: event.tags,
+      title: event.title,
+      venueName: event.venueName,
+      source: event.source,
+    })
+  ) {
+    return [];
+  }
+
   const fromPayload = (event.rawPayload?.artists ?? []).filter(
     (a): a is string => typeof a === "string" && Boolean(a.trim()),
   );
   if (fromPayload.length) return fromPayload.map((a) => a.trim());
-
-  const isMusic =
-    event.source === "ra" ||
-    event.source === "19hz" ||
-    event.categories.some((c) => c.startsWith("music."));
-  if (!isMusic) return [];
 
   return parseLineupArtists(event.title);
 }

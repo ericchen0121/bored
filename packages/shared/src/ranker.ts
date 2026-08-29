@@ -1,4 +1,5 @@
-import { isHappeningNow } from "./datetime";
+import { dayCardLabel, dayKey, isHappeningNow } from "./datetime";
+import { haversineMiles } from "./geo";
 import type { FeedCard, UserPrefs } from "./schemas";
 
 const ADJACENT: Record<string, string[]> = {
@@ -49,22 +50,6 @@ function interestMap(prefs: UserPrefs): Map<string, number> {
   return new Map(prefs.interests.map((i) => [i.category, i.weight]));
 }
 
-function haversineMiles(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number,
-): number {
-  const R = 3958.8;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
 export type Rankable = {
   id: string;
   kind: "event" | "movie_showtime" | "recommendation";
@@ -92,6 +77,9 @@ export type Rankable = {
   recommendationLabel?: string | null;
   sourceTrust?: number;
   city?: string | null;
+  isSponsored?: boolean;
+  boostWeight?: number;
+  sponsorEndsAt?: Date | string | null;
 };
 
 export type RankContext = {
@@ -134,29 +122,31 @@ function categoryScore(categories: string[], interests: Map<string, number>) {
   return { affinity, adjacent };
 }
 
+/** Partiful "Trending in the Bay" (and similar) — social-proof discovery signal. */
+function isTrendingTag(tags: string[] | undefined): boolean {
+  if (!tags?.length) return false;
+  return tags.some((t) => t.trim().toLowerCase() === "trending");
+}
+
 function timeScore(
   startsAt: Date,
   now: Date,
-  mode: "tonight" | "weekend" | "for_you" | "all",
+  mode: "for_you" | "today" | "weekend" | "date",
 ) {
   const hours = (startsAt.getTime() - now.getTime()) / 3600000;
   if (hours < -1) return -10;
-  if (mode === "all") {
+  if (mode === "date" || mode === "today") {
     if (hours < 24) return 1;
     if (hours < 72) return 0.85;
     if (hours < 168) return 0.7;
     return 0.5;
-  }
-  if (mode === "tonight") {
-    if (hours <= 12) return 1;
-    if (hours <= 24) return 0.4;
-    return 0.05;
   }
   if (mode === "weekend") {
     const day = startsAt.getDay();
     const isWeekendish = day === 5 || day === 6 || day === 0;
     return isWeekendish && hours < 96 ? 1 : 0.2;
   }
+  // for_you: prefer soon, keep mid-horizon visible
   if (hours < 48) return 0.9;
   if (hours < 168) return 0.6;
   return 0.25;
@@ -172,6 +162,8 @@ function toCard(s: {
   imageUrl?: string | null;
   venueName?: string | null;
   neighborhood?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   categories: string[];
   tags?: string[];
   isFree?: boolean;
@@ -184,6 +176,8 @@ function toCard(s: {
   ratings?: FeedCard["ratings"];
   showtimesPreview?: FeedCard["showtimesPreview"];
   recommendationLabel?: string | null;
+  isSponsored?: boolean;
+  boostWeight?: number;
 }): FeedCard {
   return {
     kind: s.kind,
@@ -195,6 +189,8 @@ function toCard(s: {
     imageUrl: s.imageUrl ?? null,
     venueName: s.venueName ?? null,
     neighborhood: s.neighborhood ?? null,
+    lat: s.lat ?? null,
+    lng: s.lng ?? null,
     categories: s.categories,
     tags: s.tags?.length ? s.tags : undefined,
     source: s.source ?? null,
@@ -207,13 +203,15 @@ function toCard(s: {
     ratings: s.ratings,
     showtimesPreview: s.showtimesPreview,
     recommendationLabel: s.recommendationLabel ?? null,
+    isSponsored: s.isSponsored || undefined,
+    boostWeight: s.boostWeight,
   };
 }
 
 export function rankFeed(
   items: Rankable[],
   ctx: RankContext,
-  mode: "tonight" | "weekend" | "for_you" | "all" = "for_you",
+  mode: "for_you" | "today" | "weekend" | "date" = "for_you",
   limit = 40,
 ): FeedCard[] {
   const now = ctx.now ?? new Date();
@@ -223,7 +221,7 @@ export function rankFeed(
   const radius = ctx.prefs.radiusMiles ?? 15;
   const dismissed = ctx.dismissedIds ?? new Set();
   const saved = ctx.savedBoostIds ?? new Set();
-  const showAll = ctx.showAll || mode === "all";
+  const showAll = ctx.showAll || mode === "date" || mode === "today";
 
   type Scored = Rankable & {
     score: number;
@@ -278,6 +276,7 @@ export function rankFeed(
           : 0;
     const saveBoost =
       saved.has(item.id) || (item.filmId && saved.has(item.filmId)) ? 0.25 : 0;
+    const trendingBoost = isTrendingTag(item.tags) ? 0.32 : 0;
     const registrationPenalty =
       item.registrationStatus === "sold_out"
         ? 0.4
@@ -290,19 +289,27 @@ export function rankFeed(
     const primary = Math.max(affinity, adjacent * 0.9);
 
     const score = showAll
-      ? t * 0.7 + primary * 0.2 + distanceBoost * 0.1 + saveBoost - registrationPenalty
+      ? t * 0.7 +
+        primary * 0.2 +
+        distanceBoost * 0.1 +
+        saveBoost +
+        trendingBoost -
+        registrationPenalty
       : primary * 0.45 +
         t * 0.25 +
         distanceBoost * 0.15 +
         neighborhoodBoost +
         trust * 0.08 +
         ratingBoost +
-        saveBoost -
+        saveBoost +
+        trendingBoost -
         registrationPenalty;
 
     let bucket: FeedCard["bucket"] = "serendipity";
     if (affinity >= 0.55) bucket = "affinity";
-    else if (adjacent >= 0.35 || affinity >= 0.25) bucket = "adjacent";
+    else if (adjacent >= 0.35 || affinity >= 0.25 || trendingBoost > 0) {
+      bucket = "adjacent";
+    }
 
     scored.push({ ...item, score, bucket, affinity, adjacent });
   }
@@ -367,5 +374,82 @@ export function rankFeed(
   }
 
   selected.sort((a, b) => b.score - a.score);
-  return selected.slice(0, limit).map(toCard);
+  return selected.slice(0, limit).map((s) =>
+    toCard({
+      ...s,
+      isSponsored: s.isSponsored,
+      boostWeight: s.boostWeight,
+    }),
+  );
+}
+
+export type RankForYouTopicContext = RankContext & {
+  /** Metro timezone for Today / weekend day boundaries. */
+  timeZone: string;
+};
+
+/**
+ * For You + topic chip: lead with Today matches, then This Weekend, then the
+ * rest of the horizon — so a thin topic still fills from nearer windows first.
+ *
+ * Topic browse uses showAll (no budget/radius hard cull) — same idea as source chips.
+ */
+export function rankForYouTopicFeed(
+  items: Rankable[],
+  ctx: RankForYouTopicContext,
+  limit = 40,
+): FeedCard[] {
+  const now = ctx.now ?? new Date();
+  const tz = ctx.timeZone;
+  const today = dayKey(now, tz);
+  const browseCtx: RankContext = { ...ctx, showAll: true };
+
+  const todayItems: Rankable[] = [];
+  const weekendItems: Rankable[] = [];
+  const restItems: Rankable[] = [];
+
+  for (const item of items) {
+    const key = dayKey(item.startsAt, tz);
+    if (key === today) {
+      todayItems.push(item);
+      continue;
+    }
+    const label = dayCardLabel(key, tz, now);
+    const upcomingOrLive =
+      item.startsAt.getTime() >= now.getTime() ||
+      isHappeningNow(item.startsAt, item.endsAt ?? null, now);
+    if (label.isWeekend && upcomingOrLive) {
+      weekendItems.push(item);
+    } else {
+      restItems.push(item);
+    }
+  }
+
+  const out: FeedCard[] = [];
+  const used = new Set<string>();
+
+  const appendRanked = (
+    pool: Rankable[],
+    mode: "for_you" | "today" | "weekend" | "date",
+  ) => {
+    if (out.length >= limit) return;
+    const cards = rankFeed(
+      pool.filter((i) => !used.has(i.id)),
+      browseCtx,
+      mode,
+      limit - out.length,
+    );
+    for (const card of cards) {
+      if (out.length >= limit) break;
+      if (used.has(card.id)) continue;
+      out.push(card);
+      used.add(card.id);
+    }
+  };
+
+  appendRanked(todayItems, "today");
+  appendRanked(weekendItems, "weekend");
+  appendRanked(restItems, "for_you");
+
+  return out.slice(0, limit);
 }

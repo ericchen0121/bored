@@ -74,6 +74,14 @@ export const events = pgTable(
     registrationCheckedAt: timestamp("registration_checked_at", {
       withTimezone: true,
     }),
+    /** Native boost inventory — set by ops/sales; ingest upserts must not clear. */
+    isSponsored: boolean("is_sponsored").notNull().default(false),
+    sponsorId: uuid("sponsor_id"),
+    /** Relative priority among active sponsored rows (higher first). */
+    boostWeight: doublePrecision("boost_weight").notNull().default(1),
+    sponsorEndsAt: timestamp("sponsor_ends_at", { withTimezone: true }),
+    /** Soft-hide from public feed/detail; ingest upserts must not clear. */
+    hidden: boolean("hidden").notNull().default(false),
     rawPayload: jsonb("raw_payload"),
     contentHash: varchar("content_hash", { length: 64 }).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
@@ -83,6 +91,20 @@ export const events = pgTable(
     uniqueIndex("events_source_source_event_id_idx").on(t.source, t.sourceEventId),
   ],
 );
+
+/** Local advertisers / venue packages (founder-sold for now). */
+export const sponsors = pgTable("sponsors", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  /** Metro slug: sf | chicago | bay */
+  metro: varchar("metro", { length: 32 }).notNull().default("sf"),
+  /** venue_boost | happy_hour | festival */
+  package: varchar("package", { length: 40 }).notNull().default("venue_boost"),
+  contactEmail: varchar("contact_email", { length: 255 }),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const recurringShows = pgTable("recurring_shows", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -211,6 +233,25 @@ export const ingestRuns = pgTable("ingest_runs", {
   status: varchar("status", { length: 20 }).notNull().default("running"),
   itemsUpserted: integer("items_upserted").default(0),
   error: text("error"),
+});
+
+/**
+ * Admin-triggered ingest queue. The long-running `ingest --schedule` process
+ * polls pending rows and executes via existing runAll / runAdapter.
+ * scope: phase1 | all | adapters
+ */
+export const ingestJobs = pgTable("ingest_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  scope: varchar("scope", { length: 32 }).notNull(),
+  adapterIds: jsonb("adapter_ids").$type<string[]>().notNull().default([]),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  requestedAt: timestamp("requested_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  error: text("error"),
+  requestedBy: varchar("requested_by", { length: 64 }),
 });
 
 /** Outbound CTA clicks (tickets / register / listing) for affiliates + sales. */

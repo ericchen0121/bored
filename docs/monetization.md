@@ -1,6 +1,6 @@
 # Monetization & marketing
 
-Local events discovery (SF Bay + Chicago). **No ads or payments in product yet** beyond outbound click tracking + affiliate URL rewriting. Strategy: sell high-intent “what’s on tonight” inventory to local venues — not display CPM or consumer paywalls.
+Local events discovery (SF Bay + Chicago). Outbound click tracking + affiliate rewriting and **native sponsored feed injection** are live. Strategy: sell high-intent “what’s on tonight” inventory to local venues — not display CPM or consumer paywalls.
 
 ## Principles
 
@@ -14,7 +14,7 @@ Local events discovery (SF Bay + Chicago). **No ads or payments in product yet**
 | Priority | Stream | Notes |
 |---|---|---|
 | **P0** | Ticket / listing affiliates | Wrap Ticketmaster, Eventbrite, etc. via `/r/*` redirect |
-| **P0** | Boosted / sponsored listings | Native feed cards; schema + ranker inject next |
+| **P0** | Boosted / sponsored listings | Native feed cards; **schema + injector shipped** |
 | **P1** | Local sponsor packages | Founder-sold retainers (Venue Boost, HH/Food, festival weeks) |
 | **P1** | Featured happy hour / food deal | Guaranteed slot in Food / Happy hours chips |
 | **P2** | Email / IG takeover | After weekly digest or Reels cadence exists |
@@ -102,17 +102,52 @@ Comedy clubs, indie music venues/promoters, bars with HH, indie theaters/fests, 
 
 | Phase | Days | Build | GTM |
 |---|---|---|---|
-| 1 · Quiet money | 0–30 | **Outbound redirect + affiliates + click log** (done); sponsored flag in schema | 10 warm SF venue emails; Tonight Reels 3×/week |
-| 2 · Native boost | 30–60 | Ranker boost + feed injection (max 1/8); admin/JSON sponsor config | Convert trials; 3 paying SF sponsors |
+| 1 · Quiet money | 0–30 | Outbound redirect + affiliates + click log; sponsored flag in schema | 10 warm SF venue emails; Tonight Reels 3×/week |
+| 2 · Native boost | 30–60 | **Ranker boost + feed injection (max 1/8)** (done); admin/JSON sponsor config optional | Convert trials; 3 paying SF sponsors |
 | 3 · Packages | 60–90 | HH featured slot; weekly email MVP; Chicago rate card | CHI outreach; first festival week; SEO pages |
+
+## Sponsored listings (shipped)
+
+Schema (`events`):
+
+| Column | Role |
+|---|---|
+| `is_sponsored` | Active boost flag |
+| `sponsor_id` | Optional FK-ish link to `sponsors` |
+| `boost_weight` | Priority among sponsored (higher first) |
+| `sponsor_ends_at` | Auto-expire; null = until cleared |
+
+`sponsors` table: name, metro, package (`venue_boost` \| `happy_hour` \| `festival`), contact, notes, active.
+
+**Injector** (`packages/shared/src/sponsoredFeed.ts` → `injectSponsoredIntoFeed`):
+
+1. Split feed candidates into organic vs active sponsored
+2. `rankFeed` each set
+3. Inject sponsored at interval 8, max 12% share
+4. First index 0 for Today / weekend / Select Date; 3 for For you
+5. Thin niche feeds: label only, no forced inject
+
+Feed cards and detail show a **Sponsored** label. Activate with SQL (no admin UI yet):
+
+```sql
+INSERT INTO sponsors (name, metro, package)
+VALUES ('Punch Line SF', 'sf', 'venue_boost')
+RETURNING id;
+
+UPDATE events
+SET is_sponsored = true,
+    sponsor_id = '<sponsor-uuid>',
+    boost_weight = 1.5,
+    sponsor_ends_at = now() + interval '14 days'
+WHERE id = '<event-uuid>';
+```
 
 ## Product hooks (next)
 
-- `events.isSponsored` / `sponsorId` / `boostWeight` / `sponsorEndsAt` (or `rawPayload` + config YAML)
-- `sponsors` table: name, metro, package, billing link
-- Ranker: inject after organic ranking; respect city/area/topic; frequency cap; never replace the only organic result in a niche filter
-
-## Do not do (yet)
+- Happy-hour / Food chip guaranteed slot (package-aware targeting)
+- ~~Admin or JSON config for sponsors (avoid raw SQL)~~ → **Admin CRM** at `/admin/sponsors` ([Admin](./admin.md))
+- Detail-page “nearby sponsored tip”
+- Stripe Payment Link / invoice on `sponsors`
 
 - AdSense / programmatic display
 - Consumer subscription / feed paywall

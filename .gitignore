@@ -7,7 +7,7 @@ dist
 *.log
 .DS_Store
 coverage
-drizzle/meta
 *.tsbuildinfo
 .pnpm-store
 .pnpm-home
+.tools/
