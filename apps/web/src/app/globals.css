@@ -502,20 +502,24 @@ select {
   /* Room for .chip:hover translateY so overflow-x scroll doesn't clip tops */
   padding-top: 2px;
   padding-bottom: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .nav--topics {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  overflow-x: visible;
   margin-top: 10px;
   margin-bottom: 4px;
   padding-top: 2px;
   padding-bottom: 2px;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-
-.nav--topics::-webkit-scrollbar {
-  display: none;
 }
 
 .nav--topics .chip {
@@ -672,7 +676,15 @@ select {
   margin: 12px 0 4px;
   padding: 2px 0 8px;
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.day-strip::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .day-card {
@@ -2903,8 +2915,8 @@ select {
   }
 
   .feed-filters .nav--topics {
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 
   .feed-layout .feed-grid {
@@ -3879,6 +3891,8 @@ select {
 
 .map-topic-carousel {
   margin: 0 -4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .map-topic-carousel__track {
@@ -3887,11 +3901,14 @@ select {
   overflow-x: auto;
   padding: 2px 4px 6px;
   scrollbar-width: none;
+  -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
 }
 
 .map-topic-carousel__track::-webkit-scrollbar {
   display: none;
+  width: 0;
+  height: 0;
 }
 
 .map-topic-carousel__chip {
