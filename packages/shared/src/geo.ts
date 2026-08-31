@@ -1,5 +1,6 @@
 import {
   CHI_DEFAULT,
+  LA_DEFAULT,
   SF_DEFAULT,
   defaultAreaForCity,
   type FeedArea,
@@ -29,6 +30,7 @@ const METRO_CENTERS: ReadonlyArray<{
 }> = [
   { city: "sf", lat: SF_DEFAULT.lat, lng: SF_DEFAULT.lng },
   { city: "chicago", lat: CHI_DEFAULT.lat, lng: CHI_DEFAULT.lng },
+  { city: "la", lat: LA_DEFAULT.lat, lng: LA_DEFAULT.lng },
 ];
 
 /** Nearest supported feed metro to a lat/lng point. */
@@ -58,11 +60,12 @@ export function feedCityFromTimeZone(
 ): FeedCity | null {
   if (!timeZone) return null;
   if (timeZone === "America/Chicago") return "chicago";
+  // America/Los_Angeles is shared by SF and LA — ambiguous without coords.
   if (
     timeZone === "America/Los_Angeles" ||
     timeZone === "America/Vancouver"
   ) {
-    return "sf";
+    return null;
   }
   return null;
 }

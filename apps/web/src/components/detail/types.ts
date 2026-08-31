@@ -12,6 +12,7 @@ export type EventDetail = {
   neighborhood: string | null;
   lat?: number | null;
   lng?: number | null;
+  city?: string | null;
   isFree: boolean;
   priceMin: number | null;
   priceMax: number | null;
@@ -77,6 +78,8 @@ export type FilmDetail = {
       name: string;
       neighborhood: string | null;
       address: string | null;
+      lat?: number | null;
+      lng?: number | null;
     };
   }[];
 };

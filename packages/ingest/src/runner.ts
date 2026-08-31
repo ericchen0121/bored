@@ -3,14 +3,16 @@ import { EVERGREEN_TIP_STALE_DAYS, resolveEventKind } from "@bored/shared";
 import { and, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import type { NormalizedEvent, NormalizedShowtimeBatch, SourceAdapter } from "./types.js";
 import { eventContentHash } from "./types.js";
-import { nineteenHzAdapter, nineteenHzChicagoAdapter } from "./adapters/nineteenHz.js";
+import { nineteenHzAdapter, nineteenHzChicagoAdapter, nineteenHzLaAdapter } from "./adapters/nineteenHz.js";
 import { funcheapAdapter } from "./adapters/funcheap.js";
-import { lumaAdapter, lumaChicagoAdapter } from "./adapters/luma.js";
+import { lumaAdapter, lumaChicagoAdapter, lumaLaAdapter } from "./adapters/luma.js";
 import {
   comedyVenueAdapter,
   comedyVenueChicagoAdapter,
+  comedyVenueLaAdapter,
   ticketmasterAdapter,
   ticketmasterChicagoAdapter,
+  ticketmasterLaAdapter,
 } from "./adapters/ticketmaster.js";
 import { moviesAdapter } from "./adapters/movies.js";
 import { recurringComedyAdapter } from "./adapters/recurringComedy.js";
@@ -24,29 +26,37 @@ import { foodDealsAdapter } from "./adapters/foodDeals.js";
 import { activitiesAdapter } from "./adapters/activities.js";
 import { newRestaurantsAdapter } from "./adapters/newRestaurants.js";
 import { do312Adapter } from "./adapters/do312.js";
+import { dolaAdapter } from "./adapters/dola.js";
 import { chicagoCheapAdapter } from "./adapters/chicagoCheap.js";
 
-import { raChicagoAdapter, raSfAdapter } from "./adapters/ra.js";
+import { raChicagoAdapter, raLaAdapter, raSfAdapter } from "./adapters/ra.js";
 import {
   eventbriteAdapter,
   eventbriteChicagoAdapter,
+  eventbriteLaAdapter,
 } from "./adapters/eventbrite.js";
 
 export const ALL_ADAPTERS: SourceAdapter[] = [
   // Ticket platforms before 19hz so finalize can skip URL/id twins in-run.
   raChicagoAdapter,
+  raLaAdapter,
   raSfAdapter,
   eventbriteAdapter,
   eventbriteChicagoAdapter,
+  eventbriteLaAdapter,
   nineteenHzAdapter,
   nineteenHzChicagoAdapter,
+  nineteenHzLaAdapter,
   funcheapAdapter,
   lumaAdapter,
   lumaChicagoAdapter,
+  lumaLaAdapter,
   ticketmasterAdapter,
   ticketmasterChicagoAdapter,
+  ticketmasterLaAdapter,
   comedyVenueAdapter,
   comedyVenueChicagoAdapter,
+  comedyVenueLaAdapter,
   recurringComedyAdapter,
   moviesAdapter,
   partifulAdapter,
@@ -59,6 +69,7 @@ export const ALL_ADAPTERS: SourceAdapter[] = [
   activitiesAdapter,
   newRestaurantsAdapter,
   do312Adapter,
+  dolaAdapter,
   chicagoCheapAdapter,
 ];
 
@@ -66,21 +77,28 @@ export const PHASE1_ADAPTERS = ALL_ADAPTERS.filter((a) =>
   [
     "19hz",
     "19hz_chi",
+    "19hz_la",
     "funcheap",
     "luma",
     "luma_chi",
+    "luma_la",
     "ticketmaster",
     "ticketmaster_chi",
+    "ticketmaster_la",
     "comedy_venue",
     "comedy_venue_chi",
+    "comedy_venue_la",
     "recurring",
     "movies_tms",
     "do312",
+    "dola",
     "chicago_cheap",
     "ra_chi",
+    "ra_la",
     "ra_sf",
     "eventbrite",
     "eventbrite_chi",
+    "eventbrite_la",
   ].includes(a.id),
 );
 
@@ -175,12 +193,24 @@ export async function pruneMultiDayRunsInDb(
         coalesce(city, '') AS city_key,
         starts_at,
         (starts_at AT TIME ZONE 'UTC')::date AS day,
-        starts_at < now() - interval '12 hours' AS is_past
+        (
+          starts_at < now() - interval '12 hours'
+          AND NOT (
+            raw_payload ? 'exhibition'
+            AND ends_at IS NOT NULL
+            AND ends_at >= now()
+          )
+        ) AS is_past
       FROM events
       WHERE source IN (${sql.join(
         sources.map((s) => sql`${s}`),
         sql`, `,
       )})
+      AND NOT (
+        raw_payload ? 'exhibition'
+        AND ends_at IS NOT NULL
+        AND ends_at >= now()
+      )
     ),
     within_day AS (
       SELECT id,
@@ -242,6 +272,15 @@ export async function purgePastEvents(
       and(
         lt(events.startsAt, cutoff),
         notInArray(events.source, [...PAST_PURGE_SKIP_SOURCES]),
+        sql`(
+          ${events.endsAt} IS NULL
+          OR ${events.endsAt} < now()
+        )`,
+        sql`NOT (
+          ${events.rawPayload} ? 'exhibition'
+          AND ${events.endsAt} IS NOT NULL
+          AND ${events.endsAt} >= now()
+        )`,
       ),
     )
     .returning({ id: events.id });
@@ -451,7 +490,16 @@ export async function upsertEvents(list: NormalizedEvent[]): Promise<number> {
             then ${events.url}
             else coalesce(excluded.url, ${events.url})
           end`,
-          imageUrl: sql`coalesce(excluded.image_url, ${events.imageUrl})`,
+          // Prefer a real flyer over a TM category placeholder (/dam/c/).
+          imageUrl: sql`case
+            when excluded.image_url is null then ${events.imageUrl}
+            when ${events.imageUrl} is null or btrim(${events.imageUrl}) = ''
+              then excluded.image_url
+            when ${events.imageUrl} like '%ticketm.net/dam/c/%'
+              and excluded.image_url not like '%ticketm.net/dam/c/%'
+              then excluded.image_url
+            else ${events.imageUrl}
+          end`,
           organizer: sql`coalesce(excluded.organizer, ${events.organizer})`,
           registrationStatus: sql`excluded.registration_status`,
           registrationCheckedAt: sql`excluded.registration_checked_at`,

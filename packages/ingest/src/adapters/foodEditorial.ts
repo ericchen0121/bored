@@ -7,6 +7,7 @@ export type FoodEditorialOutlet =
   | "infatuation"
   | "eater_sf"
   | "eater_chi"
+  | "eater_la"
   | "sf_chronicle"
   | "sf_standard"
   | "tablehopper"
@@ -37,6 +38,7 @@ const OUTLET_LABELS: Record<FoodEditorialOutlet, string> = {
   infatuation: "The Infatuation",
   eater_sf: "Eater SF",
   eater_chi: "Eater Chicago",
+  eater_la: "Eater LA",
   sf_chronicle: "SF Chronicle",
   sf_standard: "SF Standard",
   tablehopper: "Tablehopper",
@@ -65,6 +67,7 @@ export type FoodDetailRow = Pick<
 export function outletFromFoodUrl(url: string): FoodEditorialOutlet | null {
   if (/theinfatuation\.com/i.test(url)) return "infatuation";
   if (/chicago\.eater\.com/i.test(url)) return "eater_chi";
+  if (/la\.eater\.com/i.test(url)) return "eater_la";
   if (/sf\.eater\.com/i.test(url)) return "eater_sf";
   if (/\.eater\.com/i.test(url)) return "eater_sf";
   if (/sfchronicle\.com/i.test(url)) return "sf_chronicle";
@@ -120,6 +123,7 @@ export async function enrichFoodEditorial(
         return enrichFromInfatuation(url);
       case "eater_sf":
       case "eater_chi":
+      case "eater_la":
         return enrichFromHtmlArticle(url, outlet, opts?.venueName);
       case "sf_chronicle":
         return enrichFromHtmlArticle(url, "sf_chronicle", opts?.venueName);

@@ -6,7 +6,9 @@ import {
   categoryLabel,
   eventDetailImageUrl,
   eventHeroImageFit,
-  eventOccurrences,
+  eventOccurrencesOnLocalDay,
+  exhibitionScheduleFromPayload,
+  exhibitionWhenLabel,
   foodDealRecommendationLabel,
   foodDealScheduleFromPayload,
   foodEditorialOutletLabel,
@@ -16,14 +18,18 @@ import {
   igFoodRecommendationLabel,
   isActivityRecommendationSource,
   isEvergreenRecommendationSource,
+  isExhibitionTag,
+  isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
-  isHappeningNow,
   isInstagramVideo,
   isMusicListing,
   isNewRestaurantRecommendationSource,
   isSponsoredActive,
   isSportsListing,
+  isTimeTbaTag,
+  dailyHoursFromPayload,
+  formatDailyHoursLabel,
   newRestaurantRecommendationLabel,
   newRestaurantTipFallbackLabel,
   parseLineupArtists,
@@ -45,8 +51,11 @@ import {
 } from "@/lib/event-location";
 import { eventOutboundHref } from "@/lib/outbound";
 import { trackCtaClicked } from "@/lib/analytics";
+import { SaveButton } from "@/components/SaveButton";
+import { usePathname } from "next/navigation";
 import { ListenPlatformIcon } from "./ListenPlatformIcon";
 import { InstagramReelEmbed } from "./InstagramReelEmbed";
+import { EventWeatherInline } from "./EventWeatherInline";
 import type { EventDetail } from "./types";
 
 function formatDetailPrice(event: EventDetail): string {
@@ -89,8 +98,15 @@ export function EventDetailContent({
   compact?: boolean;
 }) {
   const tz = event.timezone || "America/Los_Angeles";
+  const pathname = usePathname();
   const now = useNow();
-  const live = isHappeningNow(event.startsAt, event.endsAt, now);
+  const isExhibition = isExhibitionTag(event.tags);
+  const isTimeTba = isTimeTbaTag(event.tags);
+  const exhibitionSchedule = exhibitionScheduleFromPayload(event.rawPayload);
+  const live = isFeedEventLive(event.startsAt, event.endsAt, now, {
+    tags: event.tags,
+    rawPayload: event.rawPayload,
+  });
   const startDate = new Date(event.startsAt);
   const endDate = event.endsAt ? new Date(event.endsAt) : null;
   const sameDay =
@@ -122,8 +138,20 @@ export function EventDetailContent({
               },
         )
       : null;
-  const when = whenEnd ? `${whenStart} – ${whenEnd}` : whenStart;
-  const occurrenceTimes = eventOccurrences({
+  const when = exhibitionSchedule
+    ? exhibitionWhenLabel(exhibitionSchedule, tz)
+    : isTimeTba
+      ? (() => {
+          const hours = dailyHoursFromPayload(event.rawPayload);
+          const window = hours
+            ? formatDailyHoursLabel(hours)
+            : "Times vary";
+          return `${formatDayOnly(event.startsAt, tz)} · ${window}`;
+        })()
+      : whenEnd
+        ? `${whenStart} – ${whenEnd}`
+        : whenStart;
+  const occurrenceTimes = eventOccurrencesOnLocalDay({
     title: event.title,
     venueName: event.venueName,
     startsAt: startDate,
@@ -390,27 +418,35 @@ export function EventDetailContent({
       )}
 
       <header className="detail-body__header">
-        <p className="eyebrow">
-          {isFoodDeal
-            ? recommendationLabel ?? "Food deal"
-            : isNewRestaurant
-              ? newRestaurantTipFallbackLabel(recommendationLabel)
-              : isActivityTip
-                ? recommendationLabel
-                  ? recommendationLabel
-                  : "Activity · Recommendation"
-                : isFoodTip
+        <div className="detail-body__header-top">
+          <p className="eyebrow">
+            {isFoodDeal
+              ? recommendationLabel ?? "Food deal"
+              : isNewRestaurant
+                ? newRestaurantTipFallbackLabel(recommendationLabel)
+                : isActivityTip
                   ? recommendationLabel
                     ? recommendationLabel
-                    : "Food · Recommendation"
-                  : categoryLine || "Event"}
-          {event.isFree
-            ? categoryLine || isEvergreenTip
-              ? " · Free"
-              : "Free"
-            : ""}
-          {event.ageRestriction ? ` · ${event.ageRestriction}` : ""}
-        </p>
+                    : "Activity · Recommendation"
+                  : isFoodTip
+                    ? recommendationLabel
+                      ? recommendationLabel
+                      : "Food · Recommendation"
+                    : categoryLine || "Event"}
+            {event.isFree
+              ? categoryLine || isEvergreenTip
+                ? " · Free"
+                : "Free"
+              : ""}
+            {event.ageRestriction ? ` · ${event.ageRestriction}` : ""}
+          </p>
+          <SaveButton
+            targetKind="event"
+            targetId={event.id}
+            returnTo={pathname || undefined}
+            className="detail-body__save"
+          />
+        </div>
         <h2 className="detail-body__title">{displayTitle}</h2>
         {live && !isEvergreenTip ? (
           <p className="detail-body__live">
@@ -510,6 +546,26 @@ export function EventDetailContent({
           })}
         />
       )}
+
+      {!isEvergreenTip ? (
+        <EventWeatherInline
+          startsAt={event.startsAt}
+          endsAt={event.endsAt}
+          timezone={tz}
+          lat={event.lat}
+          lng={event.lng}
+          venueName={event.venueName}
+          title={event.title}
+          address={event.address}
+          city={typeof event.city === "string" ? event.city : null}
+          neighborhood={event.neighborhood}
+          placeLabel={
+            event.neighborhood ||
+            (typeof event.city === "string" ? event.city : null) ||
+            event.venueName
+          }
+        />
+      ) : null}
 
       <div className="panel detail-body__panel">
         {hasLocation ? (

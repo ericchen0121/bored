@@ -1,4 +1,11 @@
-import { cityKeyFromLabel } from "@bored/shared";
+import {
+  categoriesFromMusicGenreLabel,
+  cityKeyFromLabel,
+  dailyHoursFromClockLabels,
+  fromZonedTime,
+  TIME_TBA_TAG,
+  type DailyHours,
+} from "@bored/shared";
 import { finalizeTicketmasterEvents } from "@bored/shared/coalesce";
 import { createAttractionLinkCache } from "../tmAttractionLinks.js";
 import {
@@ -7,6 +14,39 @@ import {
   type NormalizedEvent,
   type SourceAdapter,
 } from "../types.js";
+
+/**
+ * TBA / pick-a-slot Ticketmaster products whose section names are departure
+ * times. Discovery omits the wall clock; Host EDP embeds the catalog as
+ * secnames (bot-walled). Keep a small title/venue hint for known multi-slot
+ * runs — full inventory scrape is intentionally out of scope.
+ */
+const TM_TBA_HOURS_HINTS: {
+  test: (title: string, venue: string) => boolean;
+  /** Observed Host secname span (not “available today”). */
+  hours: DailyHours;
+  /** Example labels so hours stay parseable/tested via shared helper. */
+  catalogLabels: string[];
+}[] = [
+  {
+    test: (title, venue) =>
+      /river cruise/i.test(title) &&
+      /first lady|architecture center/i.test(`${title} ${venue}`),
+    // Ticketmaster section catalog: 09:00AM … 8:00PM CRUISE
+    hours: { open: "09:00", close: "20:00" },
+    catalogLabels: ["09:00AM CRUISE", "8:00PM CRUISE"],
+  },
+];
+
+function tmTbaDailyHours(title: string, venue: string): DailyHours | null {
+  for (const hint of TM_TBA_HOURS_HINTS) {
+    if (!hint.test(title, venue)) continue;
+    return (
+      dailyHoursFromClockLabels(hint.catalogLabels) ?? hint.hours
+    );
+  }
+  return null;
+}
 
 /** SF Civic Center — ~50mi covers SF + East Bay + Peninsula + South Bay. */
 const SF_GEO = {
@@ -24,15 +64,33 @@ const CHI_GEO = {
   stateCodes: new Set(["IL"]),
 };
 
+/** Downtown LA — ~50mi covers basin + valleys. */
+const LA_GEO = {
+  latlong: "34.0522,-118.2437",
+  radiusMiles: "50",
+  timezone: "America/Los_Angeles",
+  stateCodes: new Set(["CA"]),
+};
+
 const COMEDY_VENUE_KEYWORDS = /cobb|punch\s*line|punchline/i;
 
 type TmEvent = {
   id: string;
   name: string;
   url?: string;
-  images?: { url: string; width?: number }[];
+  /** Discovery “About” copy — prefer over pleaseNote (venue policy). */
+  info?: string;
+  pleaseNote?: string;
+  images?: { url: string; width?: number; fallback?: boolean }[];
   dates?: {
-    start?: { dateTime?: string; localDate?: string; localTime?: string };
+    start?: {
+      dateTime?: string;
+      localDate?: string;
+      localTime?: string;
+      timeTBA?: boolean;
+      noSpecificTime?: boolean;
+    };
+    timezone?: string;
   };
   priceRanges?: { min?: number; max?: number }[];
   classifications?: {
@@ -196,6 +254,90 @@ async function enrichSportsAttractionLinks(
   return out;
 }
 
+function resolveTmStartsAt(
+  start: NonNullable<TmEvent["dates"]>["start"] | undefined,
+  timeZone: string,
+  dailyHours?: DailyHours | null,
+): { startsAt: Date; endsAt: Date | null; timeTba: boolean } | null {
+  if (!start) return null;
+
+  const timeTba = Boolean(
+    start.timeTBA ||
+      start.noSpecificTime ||
+      (!start.dateTime && start.localDate && !start.localTime),
+  );
+
+  if (timeTba) {
+    if (!start.localDate) return null;
+    const [y, m, d] = start.localDate.split("-").map(Number);
+    if (!y || !m || !d) return null;
+    if (dailyHours) {
+      const [oh, om] = dailyHours.open.split(":").map(Number);
+      const [ch, cm] = dailyHours.close.split(":").map(Number);
+      return {
+        startsAt: fromZonedTime(y, m, d, oh ?? 9, om ?? 0, 0, timeZone),
+        endsAt: fromZonedTime(y, m, d, ch ?? 17, cm ?? 0, 0, timeZone),
+        timeTba: true,
+      };
+    }
+    // Noon local — day bucket only; UI suppresses clock time via time_tba.
+    return {
+      startsAt: fromZonedTime(y, m, d, 12, 0, 0, timeZone),
+      endsAt: null,
+      timeTba: true,
+    };
+  }
+
+  if (start.dateTime) {
+    const startsAt = new Date(start.dateTime);
+    if (Number.isNaN(startsAt.getTime())) return null;
+    return { startsAt, endsAt: null, timeTba: false };
+  }
+
+  if (start.localDate && start.localTime) {
+    const [y, m, d] = start.localDate.split("-").map(Number);
+    if (!y || !m || !d) return null;
+    const [hh, mm, ss] = start.localTime.split(":").map(Number);
+    return {
+      startsAt: fromZonedTime(
+        y,
+        m,
+        d,
+        hh ?? 0,
+        mm ?? 0,
+        ss ?? 0,
+        timeZone,
+      ),
+      endsAt: null,
+      timeTba: false,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Prefer real flyers (`fallback: false`, often TicketWeb) over genre/category
+ * placeholders — those are usually larger 16:9 assets under ticketm.net/dam/c/.
+ */
+function pickTmImage(images: TmEvent["images"]): string | null {
+  if (!images?.length) return null;
+  const ranked = [...images].sort((a, b) => {
+    const aFb = a.fallback === true ? 1 : 0;
+    const bFb = b.fallback === true ? 1 : 0;
+    if (aFb !== bFb) return aFb - bFb;
+    return (b.width ?? 0) - (a.width ?? 0);
+  });
+  return ranked[0]?.url ?? null;
+}
+
+/** Discovery “About” blurb; skip pleaseNote (scalping / door policy). */
+function tmEventDescription(ev: TmEvent): string | null {
+  const info = ev.info?.replace(/\s+/g, " ").trim();
+  if (!info) return null;
+  return info.length > 4000 ? info.slice(0, 4000) : info;
+}
+
 function normalizeTmEvent(
   ev: TmEvent,
   opts: {
@@ -204,14 +346,23 @@ function normalizeTmEvent(
   },
 ): NormalizedEvent | null {
   const venue = ev._embedded?.venues?.[0];
-  const start =
-    ev.dates?.start?.dateTime ??
-    (ev.dates?.start?.localDate
-      ? `${ev.dates.start.localDate}T${ev.dates.start.localTime ?? "20:00:00"}`
-      : null);
-  if (!start) return null;
-  const startsAt = new Date(start);
-  if (Number.isNaN(startsAt.getTime())) return null;
+  const timeZone = ev.dates?.timezone || opts.timezone;
+  const venueName = venue?.name ?? "";
+  const tbaHours = tmTbaDailyHours(ev.name, venueName);
+  const resolved = resolveTmStartsAt(
+    ev.dates?.start,
+    timeZone,
+    // Only apply catalog hours when Discovery says time is TBA.
+    ev.dates?.start?.timeTBA ||
+      ev.dates?.start?.noSpecificTime ||
+      (!ev.dates?.start?.dateTime &&
+        ev.dates?.start?.localDate &&
+        !ev.dates?.start?.localTime)
+      ? tbaHours
+      : null,
+  );
+  if (!resolved) return null;
+  const { startsAt, endsAt, timeTba } = resolved;
   if (startsAt.getTime() < Date.now() - 60 * 60 * 1000) return null;
 
   const stateCode = venue?.state?.stateCode?.toUpperCase();
@@ -226,13 +377,10 @@ function normalizeTmEvent(
 
   const segment = ev.classifications?.[0]?.segment?.name?.toLowerCase() ?? "";
   const genre = ev.classifications?.[0]?.genre?.name?.toLowerCase() ?? "";
-  const venueName = venue?.name ?? "";
   const categories = mapTmCategories(segment, genre, venueName);
   const priceMin = ev.priceRanges?.[0]?.min ?? null;
   const priceMax = ev.priceRanges?.[0]?.max ?? null;
-  const image =
-    [...(ev.images ?? [])].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]
-      ?.url ?? null;
+  const image = pickTmImage(ev.images);
 
   const isSports = /sports/i.test(segment);
   const attractionRows = (ev._embedded?.attractions ?? [])
@@ -244,14 +392,24 @@ function normalizeTmEvent(
     .slice(0, 12);
   const artists = attractionRows.map((a) => a.name);
 
+  const baseTags = [
+    ...tmGenreTags(genre, categories),
+    ...(isSports ? ["sports"] : []),
+    ...(timeTba ? [TIME_TBA_TAG] : []),
+  ];
+
+  const dailyHours = timeTba ? tbaHours : null;
+
   return {
     source: COMEDY_VENUE_KEYWORDS.test(venueName)
       ? "comedy_venue"
       : "ticketmaster",
     sourceEventId: ev.id,
     title: ev.name,
+    description: tmEventDescription(ev),
     startsAt,
-    timezone: opts.timezone,
+    endsAt,
+    timezone: timeZone,
     venueName,
     address: venue?.address?.line1 ?? null,
     lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
@@ -263,10 +421,7 @@ function normalizeTmEvent(
     categories,
     // Segment is coarse TM taxonomy (e.g. "Arts & Theatre") — already mapped
     // into categories. Keep genre only when it adds signal beyond the category.
-    tags: [
-      ...tmGenreTags(genre, categories),
-      ...(isSports ? ["sports"] : []),
-    ],
+    tags: baseTags,
     url: ev.url ?? null,
     imageUrl: image,
     rawPayload: {
@@ -275,6 +430,8 @@ function normalizeTmEvent(
       venue: venueName,
       venueCity,
       stateCode,
+      ...(timeTba ? { timeTba: true } : {}),
+      ...(dailyHours ? { dailyHours } : {}),
       ...(artists.length ? { artists } : {}),
       // Sports: stubs enriched later via /attractions/{id} externalLinks.
       ...(isSports && attractionRows.length
@@ -302,6 +459,12 @@ export const ticketmasterChicagoAdapter = createTicketmasterAdapter({
   adapterId: "ticketmaster_chi",
   description: "Ticketmaster Discovery Chicago (latlong + 40mi)",
   geo: CHI_GEO,
+});
+
+export const ticketmasterLaAdapter = createTicketmasterAdapter({
+  adapterId: "ticketmaster_la",
+  description: "Ticketmaster Discovery Los Angeles (latlong + 50mi)",
+  geo: LA_GEO,
 });
 
 /** Dedicated Cobb's + Punch Line venue pulls (same TM API, filtered). */
@@ -395,18 +558,40 @@ export const comedyVenueChicagoAdapter = createComedyVenueAdapter({
   ],
 });
 
+export const comedyVenueLaAdapter = createComedyVenueAdapter({
+  adapterId: "comedy_venue_la",
+  description:
+    "Comedy Store, Laugh Factory Hollywood, The Improv via Ticketmaster keyword search",
+  geo: LA_GEO,
+  keywords: [
+    "The Comedy Store",
+    "Laugh Factory Hollywood",
+    "Hollywood Improv",
+    "Dynasty Typewriter",
+    "Upright Citizens Brigade",
+  ],
+});
+
 function mapTmCategories(segment: string, genre: string, venue: string): string[] {
   if (COMEDY_VENUE_KEYWORDS.test(venue) || /comedy/i.test(segment + genre)) {
     return ["comedy.club"];
   }
+  const fromGenre = categoriesFromMusicGenreLabel(genre);
+  if (fromGenre.length) {
+    if (
+      fromGenre.includes("music.electronic") &&
+      !fromGenre.includes("nightlife")
+    ) {
+      return [...fromGenre, "nightlife"];
+    }
+    return fromGenre;
+  }
+
   const genreMusic =
     /music|rock|pop|jazz|hip hop|hip-hop|rap|country|folk|alternative|metal|punk|soul|r&b|latin|reggae|blues|electronic|dance|house|techno/i.test(
       genre,
     );
   if (/music/i.test(segment) || genreMusic) {
-    if (/electronic|dance|house|techno/i.test(genre))
-      return ["music.electronic", "nightlife"];
-    if (/jazz/i.test(genre)) return ["music.jazz"];
     return ["music.live"];
   }
   if (/sports/i.test(segment)) {

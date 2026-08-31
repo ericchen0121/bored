@@ -1,0 +1,28 @@
+---
+description: User owns local servers in Cursor terminals; agents never start/restart/kill them
+alwaysApply: true
+---
+
+# Local dev: user-owned terminals only
+
+The user runs the stack in **their own Cursor terminals**. Agents must not manage it.
+
+## User workflow
+
+Two terminals (leave them open):
+
+1. `pnpm dev:api` — API on `:4000` (`tsx watch`; code reloads automatically)
+2. `pnpm --filter @bored/web dev` — or `pnpm dev:web` — web on `:3000` (Next Fast Refresh)
+
+Alternatively one supervised stack: `pnpm dev` / `pnpm dev:restart` (`scripts/dev.sh`). Prefer the two-terminal setup when the user wants full control.
+
+## Agent rules (hard)
+
+- **Never** start, restart, stop, or kill `pnpm dev`, `pnpm dev:restart`, `pnpm dev:api`, `pnpm dev:web`, `tsx watch`, `next dev`, or listeners on `:3000`/`:4000`.
+- **Never** free ports 3000/4000, `pkill` bored dev processes, or double-fork/`nohup` the stack.
+- After code edits: rely on hot reload. Do not restart anything.
+- If the user reports the site is down or ports are busy: tell them what to check in **their** terminals (e.g. Ctrl+C and re-run `pnpm dev:api` / `pnpm dev:web`). Do not fix it by starting servers yourself unless they explicitly ask you to.
+
+## Exceptions
+
+Only if the user **explicitly** asks the agent to restart or free ports in that message — then do exactly what they asked, nothing more.

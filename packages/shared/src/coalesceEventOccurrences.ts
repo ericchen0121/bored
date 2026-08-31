@@ -72,7 +72,7 @@ function pickPreferredUrl(
   const external = urls.find((u) => {
     try {
       const host = new URL(u).hostname.replace(/^www\./i, "").toLowerCase();
-      return host !== "do312.com";
+      return host !== "do312.com" && host !== "dolosangeles.com";
     } catch {
       return true;
     }
@@ -82,9 +82,16 @@ function pickPreferredUrl(
 
 function mergeOccurrenceGroup<T extends SoftCarrier>(group: T[]): T {
   const canonical = pickCanonical(group);
+  const tz = canonical.timezone ?? "America/Los_Angeles";
+  const day = dayKey(
+    group.reduce((earliest, row) =>
+      row.startsAt.getTime() < earliest.startsAt.getTime() ? row : earliest,
+    ).startsAt,
+    tz,
+  );
   const occurrences = dedupeOccurrences(
     group.flatMap((row) => eventOccurrences(row)),
-  );
+  ).filter((o) => dayKey(o.startsAt, tz) === day);
   const earliest = new Date(occurrences[0]!.startsAt);
   const payload =
     (canonical.rawPayload as Record<string, unknown> | null | undefined) ?? {};
@@ -178,13 +185,16 @@ function venuesCompatibleForSoftMerge(
 }
 
 /**
- * Soft twin: shared ticket URL (any source), or same source + day + soft title
- * + compatible venue. Catches Do312 dual listings (& vs x, shorter vs "at Venue").
+ * Soft twin: shared ticket URL on the same local day (any source), or same
+ * source + day + soft title + compatible venue. Same Universe/TM URL across
+ * multi-day timed-entry runs must NOT collapse into one listing.
  */
 export function listingsSoftDuplicateMatch(
   a: SoftCarrier,
   b: SoftCarrier,
 ): boolean {
+  if (!sameLocalDay(a, b)) return false;
+
   const urlA = listingIdentityUrl(a.url);
   const urlB = listingIdentityUrl(b.url);
   if (urlA && urlB && urlA === urlB) return true;
@@ -192,7 +202,6 @@ export function listingsSoftDuplicateMatch(
   const sourceA = a.source;
   const sourceB = b.source;
   if (!sourceA || !sourceB || sourceA !== sourceB) return false;
-  if (!sameLocalDay(a, b)) return false;
   if (!musicTitlesSoftMatch(a.title, b.title)) return false;
   return venuesCompatibleForSoftMerge(a, b);
 }
@@ -227,7 +236,14 @@ export function coalesceSoftDuplicates<T extends SoftCarrier>(rows: T[]): T[] {
     byUrl.set(id, list);
   }
   for (const idxs of byUrl.values()) {
-    for (let k = 1; k < idxs.length; k++) union(idxs[0]!, idxs[k]!);
+    for (let a = 0; a < idxs.length; a++) {
+      for (let b = a + 1; b < idxs.length; b++) {
+        const ia = idxs[a]!;
+        const ib = idxs[b]!;
+        if (!sameLocalDay(rows[ia]!, rows[ib]!)) continue;
+        union(ia, ib);
+      }
+    }
   }
 
   for (let i = 0; i < rows.length; i++) {

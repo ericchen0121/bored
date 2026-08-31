@@ -40,6 +40,8 @@ Same as `pnpm dev` — frees ports and starts fresh so new env vars load.
 | API health | http://127.0.0.1:4000/health |
 | Admin | http://127.0.0.1:3000/admin |
 
+**Share / SEO URLs locally:** OG images, JSON-LD, and sitemap entries use `siteUrl()`. Locally that defaults to `http://127.0.0.1:3000`. For production-like previews, set `NEXT_PUBLIC_SITE_URL` in `.env` and restart web (`pnpm dev:restart`).
+
 Quick check:
 
 ```bash

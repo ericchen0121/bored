@@ -229,6 +229,16 @@ function inferChicagoCity(venue: string): string {
   return "chicago";
 }
 
+function inferLaCity(venue: string): string {
+  const v = venue.toLowerCase();
+  if (v.includes("santa monica")) return "santa_monica";
+  if (v.includes("pasadena")) return "pasadena";
+  if (v.includes("long beach")) return "long_beach";
+  if (v.includes("hollywood")) return "hollywood";
+  if (v.includes("downtown")) return "la";
+  return "la";
+}
+
 function parse19hzDate(
   text: string,
   year: number,
@@ -289,4 +299,13 @@ export const nineteenHzChicagoAdapter = createNineteenHzAdapter({
   utcOffsetHours: 5,
   timezone: "America/Chicago",
   inferCity: inferChicagoCity,
+});
+
+export const nineteenHzLaAdapter = createNineteenHzAdapter({
+  adapterId: "19hz_la",
+  description: "19hz.info Los Angeles electronic music events",
+  listingUrl: "https://19hz.info/eventlisting_LosAngeles.php",
+  utcOffsetHours: 7,
+  timezone: "America/Los_Angeles",
+  inferCity: inferLaCity,
 });

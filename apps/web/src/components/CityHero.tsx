@@ -13,10 +13,11 @@ import { CityHeroFx } from "@/components/CityHeroFx";
 type Props = {
   city: FeedCity;
   area?: FeedArea;
+  status?: ReactNode;
   children?: ReactNode;
 };
 
-export function CityHero({ city, area, children }: Props) {
+export function CityHero({ city, area, status, children }: Props) {
   const image = CITY_HERO_IMAGES[city];
   const style = CITY_HERO_STYLES[city];
   const title = cityHeroTitle(city, area);
@@ -51,8 +52,13 @@ export function CityHero({ city, area, children }: Props) {
           <div className="city-hero__fade city-hero__fade--bottom" aria-hidden />
         </div>
         <div className="city-hero__copy">
-          <p className="city-hero__eyebrow">What&apos;s on in</p>
-          <h1 className="city-hero__title">{title}</h1>
+          <div className="city-hero__top">
+            <div className="city-hero__titles">
+              <p className="city-hero__eyebrow">What&apos;s on in</p>
+              <h1 className="city-hero__title">{title}</h1>
+            </div>
+            {status}
+          </div>
           <p className="city-hero__lede">{lede}</p>
           {children}
         </div>

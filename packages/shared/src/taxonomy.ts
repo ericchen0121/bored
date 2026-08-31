@@ -2,6 +2,15 @@ export const INTEREST_CATEGORIES = [
   "music.electronic",
   "music.live",
   "music.jazz",
+  "music.rock",
+  "music.indie",
+  "music.punk",
+  "music.metal",
+  "music.blues",
+  "music.folk",
+  "music.country",
+  "music.pop",
+  "music.rnb",
   "music.house",
   "music.tech_house",
   "music.techno",
@@ -28,25 +37,59 @@ export const INTEREST_CATEGORIES = [
 
 export type InterestCategory = (typeof INTEREST_CATEGORIES)[number];
 
-/** Fine-grained electronic / dance genres (19hz tags → tastes) */
-export const MUSIC_GENRE_CATEGORIES = [
+/** Fine-grained electronic / dance genres (19hz / RA tags → tastes) */
+export const MUSIC_DANCE_GENRE_CATEGORIES = [
   "music.house",
   "music.tech_house",
   "music.techno",
   "music.drum_and_bass",
   "music.bass",
   "music.trance",
+] as const satisfies readonly InterestCategory[];
+
+/**
+ * Live / ticketed genres (Ticketmaster, Eventbrite, etc.).
+ * Selecting these boosts non-EDM concerts beyond coarse “Live music”.
+ */
+export const MUSIC_LIVE_GENRE_CATEGORIES = [
+  "music.rock",
+  "music.indie",
+  "music.punk",
+  "music.metal",
+  "music.blues",
+  "music.jazz",
   "music.hip_hop",
+  "music.rnb",
+  "music.folk",
+  "music.country",
+  "music.pop",
   "music.latin",
 ] as const satisfies readonly InterestCategory[];
 
+/** All fine-grained music genres (dance + live). Prefer the split lists in UI. */
+export const MUSIC_GENRE_CATEGORIES = [
+  ...MUSIC_DANCE_GENRE_CATEGORIES,
+  ...MUSIC_LIVE_GENRE_CATEGORIES,
+] as const satisfies readonly InterestCategory[];
+
 export type MusicGenreCategory = (typeof MUSIC_GENRE_CATEGORIES)[number];
+export type MusicDanceGenreCategory = (typeof MUSIC_DANCE_GENRE_CATEGORIES)[number];
+export type MusicLiveGenreCategory = (typeof MUSIC_LIVE_GENRE_CATEGORIES)[number];
 
 /** Short labels for feed chips, onboarding, and event tags */
 export const INTEREST_LABELS: Record<InterestCategory, string> = {
   "music.electronic": "Electronic",
   "music.live": "Live music",
   "music.jazz": "Jazz",
+  "music.rock": "Rock",
+  "music.indie": "Indie / alt",
+  "music.punk": "Punk",
+  "music.metal": "Metal",
+  "music.blues": "Blues",
+  "music.folk": "Folk",
+  "music.country": "Country",
+  "music.pop": "Pop",
+  "music.rnb": "R&B / soul",
   "music.house": "House",
   "music.tech_house": "Tech house",
   "music.techno": "Techno",
@@ -76,6 +119,15 @@ export const CATEGORY_TAG_LABELS: Record<string, string> = {
   "music.electronic": "Electronic",
   "music.live": "Live music",
   "music.jazz": "Jazz",
+  "music.rock": "Rock",
+  "music.indie": "Indie",
+  "music.punk": "Punk",
+  "music.metal": "Metal",
+  "music.blues": "Blues",
+  "music.folk": "Folk",
+  "music.country": "Country",
+  "music.pop": "Pop",
+  "music.rnb": "R&B",
   "music.house": "House",
   "music.tech_house": "Tech house",
   "music.techno": "Techno",
@@ -116,6 +168,7 @@ const TAG_DISPLAY_NOISE = new Set([
   "indie_theater",
   "food",
   "do312",
+  "dola",
   "chicago_cheap",
   "ra",
   "manual",
@@ -152,6 +205,8 @@ const TAG_DISPLAY_NOISE = new Set([
   "arts & theater",
   "miscellaneous",
   "undefined",
+  // Internal: day known, wall-clock TBA (normalizeTagToken → spaces)
+  "time tba",
 ]);
 
 // Also hide price_$ / price_$$ tags from genre chips
@@ -172,7 +227,84 @@ function normalizeTagToken(raw: string): string {
 }
 
 /**
- * Map free-form source tags (esp. 19hz) onto interest categories.
+ * Map a free-form genre label (Ticketmaster classification, 19hz tag, etc.)
+ * onto interest categories. Empty when unrecognized.
+ */
+export function categoriesFromMusicGenreLabel(
+  raw: string | null | undefined,
+): InterestCategory[] {
+  if (!raw?.trim()) return [];
+  const t = normalizeTagToken(raw);
+  if (!t || isTagDisplayNoise(t)) return [];
+
+  const out = new Set<InterestCategory>();
+
+  if (/\btech\s*house\b/.test(t) || t === "tech house") {
+    out.add("music.tech_house");
+  } else if (
+    /\b(drum\s*and\s*bass|drum\s*&\s*bass|dnb|d&b|jungle)\b/.test(t) ||
+    t === "drum and bass"
+  ) {
+    out.add("music.drum_and_bass");
+  } else if (
+    /\b(dubstep|riddim|bass music|bassmusic|brostep|future bass)\b/.test(t) ||
+    t === "bass"
+  ) {
+    out.add("music.bass");
+  } else if (/\b(psytrance|trance|psytech|psydub)\b/.test(t)) {
+    out.add("music.trance");
+  } else if (/\btechno\b/.test(t) || t === "minimal") {
+    out.add("music.techno");
+  } else if (/\bhouse\b/.test(t)) {
+    out.add("music.house");
+  } else if (
+    /\b(electronic|edm|dance music|e\.?d\.?m)\b/.test(t) ||
+    t === "dance"
+  ) {
+    out.add("music.electronic");
+  }
+
+  if (/\b(hip\s*hop|hiphop|rap|trap)\b/.test(t)) out.add("music.hip_hop");
+  if (
+    /\b(latin|cumbia|baile funk|perreo|banda|reggaeton|salsa|afrobeat|world)\b/.test(
+      t,
+    )
+  ) {
+    out.add("music.latin");
+  }
+  if (/\bjazz\b/.test(t)) out.add("music.jazz");
+  if (/\bblues\b/.test(t)) out.add("music.blues");
+  if (/\bpunk\b/.test(t)) out.add("music.punk");
+  if (/\b(metal|hard rock)\b/.test(t)) out.add("music.metal");
+  if (/\b(indie|alternative|alt\s*rock)\b/.test(t)) out.add("music.indie");
+  if (/\b(folk|americana|bluegrass)\b/.test(t)) out.add("music.folk");
+  if (/\bcountry\b/.test(t)) out.add("music.country");
+  if (/\b(r&b|r and b|rnb|soul|funk)\b/.test(t)) out.add("music.rnb");
+  if (/\bpop\b/.test(t)) out.add("music.pop");
+  // Rock after more specific rock subtypes so metal/punk/indie win their chips too.
+  if (/\brock\b/.test(t) && !out.has("music.metal") && !out.has("music.punk")) {
+    out.add("music.rock");
+  }
+
+  // Ticketed / live genres also carry coarse Live music for “Live music” taste.
+  const liveish = MUSIC_LIVE_GENRE_CATEGORIES.some((c) => out.has(c));
+  if (liveish) out.add("music.live");
+  if (
+    out.has("music.house") ||
+    out.has("music.techno") ||
+    out.has("music.tech_house") ||
+    out.has("music.drum_and_bass") ||
+    out.has("music.bass") ||
+    out.has("music.trance")
+  ) {
+    out.add("music.electronic");
+  }
+
+  return INTEREST_CATEGORIES.filter((c) => out.has(c));
+}
+
+/**
+ * Map free-form source tags (esp. 19hz / Ticketmaster genre) onto interest categories.
  * Safe to call at ingest and again at feed-read for older rows.
  */
 export function musicCategoriesFromTags(
@@ -181,50 +313,10 @@ export function musicCategoriesFromTags(
   if (!tags?.length) return [];
   const found = new Set<MusicGenreCategory>();
   for (const raw of tags) {
-    const t = normalizeTagToken(raw);
-    if (!t || isTagDisplayNoise(t)) continue;
-
-    if (/\btech\s*house\b/.test(t) || t === "tech house") {
-      found.add("music.tech_house");
-      continue;
-    }
-    if (
-      /\b(drum\s*and\s*bass|drum\s*&\s*bass|dnb|d&b|jungle)\b/.test(t) ||
-      t === "drum and bass"
-    ) {
-      found.add("music.drum_and_bass");
-      continue;
-    }
-    if (
-      /\b(dubstep|riddim|bass music|bassmusic|brostep|future bass)\b/.test(t) ||
-      t === "bass"
-    ) {
-      found.add("music.bass");
-      continue;
-    }
-    if (/\b(psytrance|trance|psytech|psydub)\b/.test(t)) {
-      found.add("music.trance");
-      continue;
-    }
-    if (/\b(hip\s*hop|hiphop|rap|trap)\b/.test(t)) {
-      found.add("music.hip_hop");
-      continue;
-    }
-    if (
-      /\b(latin|cumbia|baile funk|perreo|banda|reggaeton|salsa|afrobeat)\b/.test(
-        t,
-      )
-    ) {
-      found.add("music.latin");
-      continue;
-    }
-    if (/\btechno\b/.test(t) || t === "minimal") {
-      found.add("music.techno");
-      continue;
-    }
-    if (/\bhouse\b/.test(t)) {
-      found.add("music.house");
-      continue;
+    for (const cat of categoriesFromMusicGenreLabel(raw)) {
+      if ((MUSIC_GENRE_CATEGORIES as readonly string[]).includes(cat)) {
+        found.add(cat as MusicGenreCategory);
+      }
     }
   }
   return MUSIC_GENRE_CATEGORIES.filter((c) => found.has(c));
@@ -235,9 +327,15 @@ export function enrichCategoriesWithTags(
   categories: string[],
   tags: string[] | null | undefined,
 ): string[] {
-  const music = musicCategoriesFromTags(tags);
-  if (!music.length) return categories;
-  return [...new Set([...categories, ...music])];
+  if (!tags?.length) return categories;
+  const fromTags = new Set<string>();
+  for (const raw of tags) {
+    for (const cat of categoriesFromMusicGenreLabel(raw)) {
+      fromTags.add(cat);
+    }
+  }
+  if (!fromTags.size) return categories;
+  return [...new Set([...categories, ...fromTags])];
 }
 
 /** Title-case a free-form tag for chips */
@@ -365,6 +463,7 @@ export const EVENT_SOURCES = [
   "activities",
   "new_restaurants",
   "do312",
+  "dola",
   "chicago_cheap",
   "ra",
   "eventbrite",
@@ -391,6 +490,7 @@ export const EVENT_SOURCE_LABELS: Record<EventSource, string> = {
   activities: "Activities",
   new_restaurants: "New restaurants",
   do312: "Do312",
+  dola: "DoLA",
   chicago_cheap: "Chicago on the Cheap",
   ra: "Resident Advisor",
   eventbrite: "Eventbrite",
@@ -418,6 +518,7 @@ const SOURCE_TYPE_HINT: Partial<Record<EventSource, EventTypeKind>> = {
   new_restaurants: "food",
   activities: "outdoors",
   do312: "nightlife",
+  dola: "nightlife",
   chicago_cheap: "free",
   ra: "music",
 };
@@ -572,6 +673,7 @@ export const FEED_FILTER_SOURCES = [
   "instagram",
   "recurring",
   "do312",
+  "dola",
   "chicago_cheap",
   "ra",
   "eventbrite",
@@ -599,7 +701,20 @@ export const CHI_FEED_FILTER_SOURCES = [
   "19hz",
   "ra",
   "do312",
+  "dola",
   "chicago_cheap",
+  "luma",
+  "ticketmaster",
+  "eventbrite",
+  "food",
+  "recurring",
+] as const satisfies readonly FeedFilterSource[];
+
+/** Los Angeles feed chips */
+export const LA_FEED_FILTER_SOURCES = [
+  "19hz",
+  "ra",
+  "dola",
   "luma",
   "ticketmaster",
   "eventbrite",
@@ -662,6 +777,11 @@ export const FEED_TOPICS = [
 ] as const;
 
 export type FeedTopic = (typeof FEED_TOPICS)[number];
+
+/** True when `value` is a known feed topic slug (for SEO hub routes). */
+export function isFeedTopic(value: string): value is FeedTopic {
+  return (FEED_TOPICS as readonly string[]).includes(value);
+}
 
 export const FEED_TOPIC_LABELS: Record<FeedTopic, string> = {
   concerts: "Concerts",
@@ -904,14 +1024,36 @@ export const CHI_DEFAULT = {
   radiusMiles: 15,
 } as const;
 
+export const LA_DEFAULT = {
+  metro: "la",
+  lat: 34.0522,
+  lng: -118.2437,
+  zip: "90012",
+  timezone: "America/Los_Angeles",
+  radiusMiles: 25,
+} as const;
+
 /** Top-level city / metro selector */
-export const FEED_CITIES = ["sf", "chicago"] as const;
+export const FEED_CITIES = ["sf", "chicago", "la"] as const;
 export type FeedCity = (typeof FEED_CITIES)[number];
 
 export const FEED_CITY_LABELS: Record<FeedCity, string> = {
   sf: "San Francisco",
   chicago: "Chicago",
+  la: "Los Angeles",
 };
+
+/** Metro name in tastes onboarding copy (SF spans East Bay / Peninsula chips). */
+export const TASTES_METRO_LABELS: Record<FeedCity, string> = {
+  sf: "SF / Bay",
+  chicago: "Chicago",
+  la: "Los Angeles",
+};
+
+/** Hint under neighborhood chips on Edit tastes — reflects active feed metro. */
+export function tastesNeighborhoodHint(city: FeedCity): string {
+  return `${TASTES_METRO_LABELS[city]} — switch city on the feed to edit the other metro.`;
+}
 
 /** SF / Bay onboarding neighborhood chips (also used as legacy flat list). */
 export const NEIGHBORHOODS = [
@@ -956,22 +1098,50 @@ export const CHI_NEIGHBORHOODS = [
   "Oak Park",
 ] as const;
 
+/** Los Angeles onboarding neighborhood chips — align with ingest labels. */
+export const LA_NEIGHBORHOODS = [
+  "Hollywood",
+  "West Hollywood",
+  "Silver Lake",
+  "Echo Park",
+  "Los Feliz",
+  "Downtown",
+  "Arts District",
+  "Koreatown",
+  "Mid-Wilshire",
+  "Culver City",
+  "Santa Monica",
+  "Venice",
+  "Pasadena",
+  "Highland Park",
+  "Beverly Hills",
+  "Westwood",
+  "Long Beach",
+  "Glendale",
+  "Burbank",
+  "DTLA",
+] as const;
+
 /** Neighborhood picker options for a feed metro. */
 export function neighborhoodsForCity(
   city: FeedCity,
 ): readonly string[] {
-  return city === "chicago" ? CHI_NEIGHBORHOODS : NEIGHBORHOODS;
+  if (city === "chicago") return CHI_NEIGHBORHOODS;
+  if (city === "la") return LA_NEIGHBORHOODS;
+  return NEIGHBORHOODS;
 }
 
 /** Default selected neighborhoods when tastes are empty for a metro. */
 export function defaultNeighborhoodsForCity(city: FeedCity): string[] {
-  return city === "chicago"
-    ? ["Wicker Park", "Logan Square", "West Loop"]
-    : ["Mission", "North Beach"];
+  if (city === "chicago")
+    return ["Wicker Park", "Logan Square", "West Loop"];
+  if (city === "la")
+    return ["Silver Lake", "Hollywood", "Downtown"];
+  return ["Mission", "North Beach"];
 }
 
 /** Geographic scope for feed filtering */
-export const FEED_AREAS = ["sf", "bay", "chicago"] as const;
+export const FEED_AREAS = ["sf", "bay", "chicago", "la"] as const;
 export type FeedArea = (typeof FEED_AREAS)[number];
 
 export const FEED_MODES = ["for_you", "today", "weekend", "date"] as const;
@@ -985,7 +1155,15 @@ export function normalizeFeedMode(
   if (value === "all") return "date";
   return FEED_MODES.includes(value as FeedMode)
     ? (value as FeedMode)
-    : "for_you";
+    : "today";
+}
+
+/** Cold-start / no-URL default: For you only when tastes exist. */
+export function defaultFeedMode(opts?: {
+  authenticated?: boolean;
+  onboardingComplete?: boolean;
+}): FeedMode {
+  return opts?.authenticated && opts?.onboardingComplete ? "for_you" : "today";
 }
 
 /** Modes that may carry an optional `date=YYYY-MM-DD` filter. */
@@ -1103,6 +1281,41 @@ const CHI_CITIES = new Set([
   "chinatown_chi",
 ]);
 
+const LA_CITIES = new Set([
+  "la",
+  "los_angeles",
+  "los angeles",
+  "hollywood",
+  "west_hollywood",
+  "santa_monica",
+  "pasadena",
+  "burbank",
+  "glendale",
+  "long_beach",
+  "culver_city",
+  "venice",
+  "silver_lake",
+  "echo_park",
+  "los_feliz",
+  "koreatown",
+  "beverly_hills",
+  "westwood",
+  "highland_park",
+  "dtla",
+  "downtown_la",
+  "inglewood",
+  "torrance",
+  "redondo_beach",
+  "manhattan_beach",
+  "hermosa_beach",
+  "el_segundo",
+  "marina_del_rey",
+  "malibu",
+  "anaheim",
+  "irvine",
+  "orange_county",
+]);
+
 const SF_NEIGHBORHOODS = new Set([
   "Mission",
   "North Beach",
@@ -1127,6 +1340,12 @@ const SF_NEIGHBORHOODS = new Set([
   "Union Square",
 ]);
 
+const LA_NEIGHBORHOOD_LABELS = new Set([
+  ...LA_NEIGHBORHOODS,
+  "Mid-Wilshire",
+  "Arts District",
+]);
+
 /** Lowercase underscore key for city comparisons */
 export function normalizeCity(city?: string | null): string {
   return (city ?? "")
@@ -1145,29 +1364,40 @@ export function cityKeyFromLabel(raw?: string | null): string {
   if (!key) return "sf";
   if (SF_CITIES.has(key) || key === "san_francisco") return "sf";
   if (CHI_CITIES.has(key) || key === "chicago") return "chicago";
+  if (LA_CITIES.has(key)) return "la";
   return key;
 }
 
 export function metroFromArea(area: FeedArea): FeedCity {
-  return area === "chicago" ? "chicago" : "sf";
+  if (area === "chicago") return "chicago";
+  if (area === "la") return "la";
+  return "sf";
 }
 
 export function defaultAreaForCity(city: FeedCity): FeedArea {
-  return city === "chicago" ? "chicago" : "bay";
+  if (city === "chicago") return "chicago";
+  if (city === "la") return "la";
+  return "bay";
 }
 
 export function areasForCity(city: FeedCity): readonly FeedArea[] {
-  return city === "chicago" ? (["chicago"] as const) : (["sf", "bay"] as const);
+  if (city === "chicago") return ["chicago"] as const;
+  if (city === "la") return ["la"] as const;
+  return ["sf", "bay"] as const;
 }
 
 export function feedFilterSourcesForCity(
   city: FeedCity,
 ): readonly FeedFilterSource[] {
-  return city === "chicago" ? CHI_FEED_FILTER_SOURCES : SF_FEED_FILTER_SOURCES;
+  if (city === "chicago") return CHI_FEED_FILTER_SOURCES;
+  if (city === "la") return LA_FEED_FILTER_SOURCES;
+  return SF_FEED_FILTER_SOURCES;
 }
 
 export function locationDefaultForArea(area: FeedArea) {
-  return area === "chicago" ? CHI_DEFAULT : SF_DEFAULT;
+  if (area === "chicago") return CHI_DEFAULT;
+  if (area === "la") return LA_DEFAULT;
+  return SF_DEFAULT;
 }
 
 export function eventInArea(
@@ -1179,6 +1409,19 @@ export function eventInArea(
   const cityIsSf = !city || SF_CITIES.has(city);
   const hoodIsSf = Boolean(neighborhood && SF_NEIGHBORHOODS.has(neighborhood));
   const cityIsChi = CHI_CITIES.has(city);
+  const cityIsLa = LA_CITIES.has(city);
+  const hoodIsLa = Boolean(
+    neighborhood && LA_NEIGHBORHOOD_LABELS.has(neighborhood),
+  );
+
+  if (area === "la") {
+    if (cityIsLa) return true;
+    if (!city) return false;
+    if (SF_CITIES.has(city) || BAY_CITIES.has(city) || cityIsChi) return false;
+    if (/los angeles|hollywood|santa monica/i.test(neighborhood)) return true;
+    if (hoodIsLa) return true;
+    return false;
+  }
 
   if (area === "chicago") {
     if (cityIsChi) return true;
@@ -1190,8 +1433,8 @@ export function eventInArea(
     return false;
   }
 
-  // SF / Bay — never mix in Chicago rows
-  if (cityIsChi) return false;
+  // SF / Bay — never mix in Chicago or LA rows
+  if (cityIsChi || cityIsLa) return false;
 
   if (area === "sf") {
     // Explicit non-SF city (e.g. Atherton from Luma) → exclude from All SF

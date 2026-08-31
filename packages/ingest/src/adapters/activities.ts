@@ -3,6 +3,7 @@ import {
   CHI_DEFAULT,
   CURATED_ACTIVITIES,
   CURATED_ACTIVITY_IMAGES,
+  LA_DEFAULT,
   SF_DEFAULT,
   suggestionStartsAt,
   type CuratedActivity,
@@ -21,6 +22,7 @@ function playKindFromTags(tags: string[] | undefined): string | null {
 const TIMEZONE_BY_CITY: Record<string, string> = {
   sf: SF_DEFAULT.timezone,
   chicago: CHI_DEFAULT.timezone,
+  la: LA_DEFAULT.timezone,
 };
 
 function timezoneForCity(city: string): string {

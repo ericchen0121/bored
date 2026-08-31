@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   COMEDY_SUBTYPES,
   EVENT_SOURCES,
+  FEED_CITIES,
   FEED_KINDS,
   INTEREST_CATEGORIES,
   REGISTRATION_STATUSES,
@@ -109,7 +110,18 @@ export const InterestWeightSchema = z.object({
 export const UserPrefsSchema = z.object({
   interests: z.array(InterestWeightSchema),
   neighborhoods: z.array(z.string()),
-  budgetMax: z.number().nullable(),
+  /** When true, hard-filter For you / weekend by {@link budgetTier}. */
+  budgetEnabled: z.boolean().optional().default(false),
+  /** Max price band $–$$$$ (1–4). Ignored when budgetEnabled is false. */
+  budgetTier: z
+    .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])
+    .nullable()
+    .optional(),
+  /**
+   * @deprecated Legacy USD ceiling. Prefer budgetTier + budgetEnabled.
+   * Still accepted on write for older clients; mapped to a tier server-side.
+   */
+  budgetMax: z.number().nullable().optional(),
   preferFree: z.boolean().optional(),
   nightsOut: z.boolean().optional(),
   radiusMiles: z.number().optional(),
@@ -123,6 +135,23 @@ export const SignalInputSchema = z.object({
   type: z.enum(SIGNAL_TYPES),
 });
 
+export const MagicLinkRequestSchema = z.object({
+  email: z.string().email().max(255),
+  /** Where to send the user after verify (path only, e.g. `/sf` or `/events/uuid`). */
+  returnTo: z.string().max(512).optional(),
+  /** Metro for city-flavored magic-link email copy + hero (`sf` | `chicago` | `la`). */
+  city: z.enum(FEED_CITIES).optional(),
+});
+
+export const AuthVerifyResponseSchema = z.object({
+  sessionToken: z.string(),
+  user: z.object({
+    id: z.string().uuid(),
+    email: z.string().nullable(),
+    displayName: z.string().nullable(),
+  }),
+});
+
 export const FeedQuerySchema = z.object({
   mode: z.preprocess(
     (v) => {
@@ -130,9 +159,9 @@ export const FeedQuerySchema = z.object({
       if (v === "all") return "date";
       return v;
     },
-    z.enum(["for_you", "today", "weekend", "date"]).default("for_you"),
+    z.enum(["for_you", "today", "weekend", "date"]).default("today"),
   ),
-  area: z.enum(["sf", "bay", "chicago"]).default("bay"),
+  area: z.enum(["sf", "bay", "chicago", "la"]).default("bay"),
   lat: z.coerce.number().optional(),
   lng: z.coerce.number().optional(),
   radiusMiles: z.coerce.number().optional(),
@@ -196,6 +225,8 @@ export const FeedCardSchema = z.object({
       }),
     )
     .optional(),
+  /** Extra times beyond showtimesPreview (full list on event details). */
+  showtimesMoreCount: z.number().int().nonnegative().optional(),
 });
 
 export const RecurringShowSchema = z.object({

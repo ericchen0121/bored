@@ -8,6 +8,7 @@ import { clearAdminToken, getAdminToken } from "../../lib/admin-api";
 const NAV = [
   { href: "/admin", label: "Ingest" },
   { href: "/admin/listings", label: "Listings" },
+  { href: "/admin/demotions", label: "Demotions" },
   { href: "/admin/sponsors", label: "Sponsors" },
   { href: "/admin/reports", label: "Reports" },
   { href: "/admin/dev", label: "Dev" },

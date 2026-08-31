@@ -329,3 +329,12 @@ export const eventbriteChicagoAdapter = createEventbriteAdapter({
   fallbackTimezone: "America/Chicago",
   maxPagesPerLocation: 8,
 });
+
+export const eventbriteLaAdapter = createEventbriteAdapter({
+  adapterId: "eventbrite_la",
+  description: "Eventbrite Los Angeles public discovery pages",
+  locationSlugs: ["ca--los-angeles", "ca--santa-monica", "ca--pasadena"],
+  categorySlug: "all-events",
+  fallbackTimezone: "America/Los_Angeles",
+  maxPagesPerLocation: 6,
+});

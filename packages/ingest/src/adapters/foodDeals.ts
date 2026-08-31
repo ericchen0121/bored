@@ -1,5 +1,6 @@
 import {
   CHI_DEFAULT,
+  LA_DEFAULT,
   CURATED_FOOD_DEALS,
   SF_DEFAULT,
   nextFoodDealOccurrence,
@@ -14,6 +15,7 @@ import {
 const TIMEZONE_BY_CITY: Record<string, string> = {
   sf: SF_DEFAULT.timezone,
   chicago: CHI_DEFAULT.timezone,
+  la: LA_DEFAULT.timezone,
 };
 
 function timezoneForCity(city?: string | null): string {

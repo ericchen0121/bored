@@ -7,7 +7,7 @@ Postgres via Drizzle (`packages/db/src/schema.ts`).
 ### `users` / `user_profiles`
 
 - Demo multi-user ready; v1 keys off `X-User-Id`
-- Profile holds interests JSON, neighborhoods, budget, geo, `onboardingComplete`
+- Profile holds interests JSON, neighborhoods, budget tier ($–$$$$) + enabled flag, geo, `onboardingComplete`
 
 ### `events`
 
@@ -22,13 +22,17 @@ Notable columns:
 - `categories[]`, `tags[]`, price / `isFree`
 - `recurringShowId` (optional)
 - `contentHash` — fingerprint of mutable listing fields (change detection); not a second identity key
-- `lastSeenAt`, `rawPayload`
+- `lastSeenAt`, `rawPayload` — opaque ingest JSON; durable schedules use keys like `schedule` (food deals / recurring), `exhibition` (`{ runStart, runEnd, dailyHours?, doStuffId? }` for long-running installations)
 - **Sponsored boost:** `isSponsored`, `sponsorId`, `boostWeight`, `sponsorEndsAt` (ingest upserts do not clear these)
 - **`hidden`** — soft-hide from public feed/detail (ops); ingest upserts do not clear
 
 ### `sponsors`
 
 Local advertiser / package rows (founder-sold). Linked from `events.sponsorId` when set. Packages: `venue_boost` | `happy_hour` | `festival`. Managed via `/admin/sponsors`.
+
+### `feed_demotion_rules`
+
+Ops soft-bury rules for feed quality. Match on metro / source / venue substring / category substring; apply `scoreMultiplier` and optional `maxPerVenue`. Managed via `/admin/demotions`. See [Ranking](./ranking.md).
 
 ### `ingest_jobs`
 
@@ -68,7 +72,7 @@ Adapters should set `city` to a slug when known:
 
 Feed area filtering uses city + neighborhood heuristics (`eventInArea`).
 
-**Time fields:** store wall-clock starts/ends as UTC. Metro defaults (`SF_DEFAULT.timezone` / `CHI_DEFAULT.timezone`) define calendar-day feed windows; per-row `timezone` is for display. Live/happening-now compares UTC instants — see [Architecture → Timezones & live](./architecture.md#timezones--live--earlier-today).
+**Time fields:** store wall-clock starts/ends as UTC. Metro defaults (`SF_DEFAULT.timezone` / `CHI_DEFAULT.timezone` / `LA_DEFAULT.timezone`) define calendar-day feed windows; per-row `timezone` is for display. Live/happening-now compares UTC instants — see [Architecture → Timezones & live](./architecture.md#timezones-live--earlier-today). Exhibitions store the full run in `startsAt`/`endsAt` plus `rawPayload.exhibition`; feed expand picks a midday slot so they don’t pin as 4 AM “live” events — [Ingest → Exhibitions](./ingest.md#long-running-exhibitions-dola--do312).
 
 ### Curated config (not in Postgres)
 

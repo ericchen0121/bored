@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import { SiteHeader } from "@/components/SiteHeader";
+import { UserProvider } from "@/components/UserProvider";
+import { jsonLdScript, organizationJsonLd, websiteJsonLd } from "@/lib/structured-data";
 import { siteUrl } from "@/lib/site";
 import "./globals.css";
 
@@ -29,11 +31,19 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript([organizationJsonLd(), websiteJsonLd()]),
+          }}
+        />
         <AnalyticsProvider>
-          <div className="shell">
-            <SiteHeader />
-            {children}
-          </div>
+          <UserProvider>
+            <div className="shell">
+              <SiteHeader />
+              {children}
+            </div>
+          </UserProvider>
         </AnalyticsProvider>
       </body>
     </html>

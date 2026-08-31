@@ -20,6 +20,7 @@ const RA_HEADERS = {
 export const RA_AREA = {
   chicago: 17,
   sf: 218,
+  la: 18,
 } as const;
 
 type RaArtist = { id?: string; name?: string };
@@ -373,4 +374,15 @@ export const raSfAdapter = createRaAdapter({
   timezone: "America/Los_Angeles",
   utcOffsetHours: 7,
   referer: "https://ra.co/events/us/sanfrancisco",
+});
+
+/** Resident Advisor Los Angeles listings (area 18). */
+export const raLaAdapter = createRaAdapter({
+  adapterId: "ra_la",
+  description: "Resident Advisor Los Angeles events (lineup + flyer + genres)",
+  areaId: RA_AREA.la,
+  city: "la",
+  timezone: "America/Los_Angeles",
+  utcOffsetHours: 7,
+  referer: "https://ra.co/events/us/losangeles",
 });

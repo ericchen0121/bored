@@ -9,7 +9,7 @@ import Map, {
   type MapRef,
 } from "react-map-gl/mapbox";
 import type { FeedCard, FeedCity } from "@bored/shared";
-import { CHI_DEFAULT, SF_DEFAULT } from "@bored/shared";
+import { CHI_DEFAULT, LA_DEFAULT, SF_DEFAULT } from "@bored/shared";
 import type { GeoJSONSource, Map as MapboxMap } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
@@ -28,6 +28,11 @@ const CITY_VIEW: Record<
     longitude: CHI_DEFAULT.lng,
     latitude: CHI_DEFAULT.lat,
     zoom: 11,
+  },
+  la: {
+    longitude: LA_DEFAULT.lng,
+    latitude: LA_DEFAULT.lat,
+    zoom: 10.5,
   },
 };
 

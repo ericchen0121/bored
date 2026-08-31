@@ -1,6 +1,7 @@
 import {
   db,
   events,
+  feedDemotionRules,
   ingestJobs,
   ingestRuns,
   outboundClicks,
@@ -11,7 +12,7 @@ import {
   PHASE1_ADAPTER_IDS,
   STATIC_INGEST_SCHEDULES,
 } from "@bored/ingest/meta";
-import { INTEREST_CATEGORIES } from "@bored/shared";
+import { INTEREST_CATEGORIES, demotionMetroMatches, eventInArea, FEED_AREAS, type FeedArea } from "@bored/shared";
 import {
   and,
   asc,
@@ -113,6 +114,53 @@ const BoostSchema = z.object({
   boostWeight: z.number().optional(),
   sponsorEndsAt: z.string().nullable().optional(),
 });
+
+const DemotionRuleFieldsSchema = z.object({
+  name: z.string().min(1),
+  metro: z
+    .union([z.string().min(1), z.literal(""), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === undefined ? null : v)),
+  source: z
+    .union([z.string().min(1), z.literal(""), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === undefined ? null : v)),
+  venueContains: z
+    .union([z.string().min(1), z.literal(""), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === undefined ? null : v)),
+  categoryContains: z
+    .union([z.string().min(1), z.literal(""), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === undefined ? null : v)),
+  scoreMultiplier: z.number().min(0).max(1).default(0.35),
+  maxPerVenue: z
+    .union([z.number().int().min(0), z.null()])
+    .optional()
+    .transform((v) => (v === undefined ? null : v)),
+  notes: z
+    .union([z.string(), z.literal(""), z.null()])
+    .optional()
+    .transform((v) => (v === "" || v === undefined ? null : v)),
+  active: z.boolean().optional(),
+});
+
+const DemotionRuleBodySchema = DemotionRuleFieldsSchema.superRefine(
+  (val, ctx) => {
+    if (
+      !val.metro &&
+      !val.source &&
+      !val.venueContains &&
+      !val.categoryContains
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "At least one match field required (metro, source, venue, or category)",
+      });
+    }
+  },
+);
 
 export const adminApp = new Hono();
 
@@ -570,6 +618,192 @@ adminApp.post("/stats/sponsors/clear-stale", async (c) => {
     )
     .returning({ id: events.id });
   return c.json({ cleared: cleared.length });
+});
+
+adminApp.get("/demotion-rules", async (c) => {
+  const active = c.req.query("active");
+  const filters = [];
+  if (active === "1" || active === "true") {
+    filters.push(eq(feedDemotionRules.active, true));
+  }
+  if (active === "0" || active === "false") {
+    filters.push(eq(feedDemotionRules.active, false));
+  }
+  const rows = await db
+    .select()
+    .from(feedDemotionRules)
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(desc(feedDemotionRules.createdAt));
+  const sourceRows = await db
+    .select({
+      source: events.source,
+      n: count(),
+    })
+    .from(events)
+    .where(eq(events.hidden, false))
+    .groupBy(events.source)
+    .orderBy(desc(count()));
+
+  const sourceCount = new Map(
+    sourceRows.map((r) => [r.source, Number(r.n)]),
+  );
+  // Prefer adapters that have data; still list known adapters with 0.
+  const sources = [
+    ...new Set([...sourceRows.map((r) => r.source), ...ALL_ADAPTER_IDS]),
+  ]
+    .sort((a, b) => (sourceCount.get(b) ?? 0) - (sourceCount.get(a) ?? 0) || a.localeCompare(b))
+    .map((id) => ({ id, count: sourceCount.get(id) ?? 0 }));
+
+  return c.json({
+    rules: rows,
+    feedAreas: FEED_AREAS,
+    sources,
+    categories: [...INTEREST_CATEGORIES],
+  });
+});
+
+/** Venue name typeahead for demotion (and other ops) forms. */
+adminApp.get("/venues/suggest", async (c) => {
+  const q = c.req.query("q")?.trim() ?? "";
+  const metro = c.req.query("metro")?.trim().toLowerCase() || null;
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 12), 1), 30);
+  if (q.length < 2) {
+    return c.json({ venues: [] as { venueName: string; count: number }[] });
+  }
+
+  const like = `%${q}%`;
+  const rows = await db
+    .select({
+      venueName: events.venueName,
+      city: events.city,
+      n: count(),
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.hidden, false),
+        isNotNull(events.venueName),
+        sql`length(trim(${events.venueName})) > 0`,
+        ilike(events.venueName, like),
+      ),
+    )
+    .groupBy(events.venueName, events.city)
+    .orderBy(desc(count()))
+    .limit(100);
+
+  const areaFilter =
+    metro && (FEED_AREAS as readonly string[]).includes(metro)
+      ? (metro as FeedArea)
+      : null;
+
+  const byVenue = new Map<string, number>();
+  for (const r of rows) {
+    const name = r.venueName?.trim();
+    if (!name) continue;
+    if (areaFilter && !eventInArea(areaFilter, { city: r.city })) continue;
+    if (metro && !areaFilter && !demotionMetroMatches(metro, r.city)) continue;
+    byVenue.set(name, (byVenue.get(name) ?? 0) + Number(r.n));
+  }
+
+  const venues = [...byVenue.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([venueName, n]) => ({ venueName, count: n }));
+
+  return c.json({ venues });
+});
+
+adminApp.post("/demotion-rules", async (c) => {
+  const body = DemotionRuleBodySchema.parse(await c.req.json());
+  const [row] = await db
+    .insert(feedDemotionRules)
+    .values({
+      name: body.name,
+      metro: body.metro,
+      source: body.source,
+      venueContains: body.venueContains,
+      categoryContains: body.categoryContains,
+      scoreMultiplier: body.scoreMultiplier,
+      maxPerVenue: body.maxPerVenue,
+      notes: body.notes,
+      active: body.active ?? true,
+    })
+    .returning();
+  return c.json({ rule: row }, 201);
+});
+
+adminApp.patch("/demotion-rules/:id", async (c) => {
+  const body = DemotionRuleFieldsSchema.partial().parse(await c.req.json());
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (body.name !== undefined) patch.name = body.name;
+  if (body.metro !== undefined) patch.metro = body.metro;
+  if (body.source !== undefined) patch.source = body.source;
+  if (body.venueContains !== undefined) patch.venueContains = body.venueContains;
+  if (body.categoryContains !== undefined) {
+    patch.categoryContains = body.categoryContains;
+  }
+  if (body.scoreMultiplier !== undefined) {
+    patch.scoreMultiplier = body.scoreMultiplier;
+  }
+  if (body.maxPerVenue !== undefined) patch.maxPerVenue = body.maxPerVenue;
+  if (body.notes !== undefined) patch.notes = body.notes;
+  if (body.active !== undefined) patch.active = body.active;
+
+  if (Object.keys(patch).length <= 1) {
+    return c.json({ error: "No fields to update" }, 400);
+  }
+
+  // Re-check match fields if any were cleared
+  const [existing] = await db
+    .select()
+    .from(feedDemotionRules)
+    .where(eq(feedDemotionRules.id, c.req.param("id")))
+    .limit(1);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+
+  const merged = {
+    metro: body.metro !== undefined ? body.metro : existing.metro,
+    source: body.source !== undefined ? body.source : existing.source,
+    venueContains:
+      body.venueContains !== undefined
+        ? body.venueContains
+        : existing.venueContains,
+    categoryContains:
+      body.categoryContains !== undefined
+        ? body.categoryContains
+        : existing.categoryContains,
+  };
+  if (
+    !merged.metro &&
+    !merged.source &&
+    !merged.venueContains &&
+    !merged.categoryContains
+  ) {
+    return c.json(
+      {
+        error:
+          "At least one match field required (metro, source, venue, or category)",
+      },
+      400,
+    );
+  }
+
+  const [row] = await db
+    .update(feedDemotionRules)
+    .set(patch)
+    .where(eq(feedDemotionRules.id, c.req.param("id")))
+    .returning();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ rule: row });
+});
+
+adminApp.delete("/demotion-rules/:id", async (c) => {
+  const deleted = await db
+    .delete(feedDemotionRules)
+    .where(eq(feedDemotionRules.id, c.req.param("id")))
+    .returning({ id: feedDemotionRules.id });
+  if (!deleted.length) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
 });
 
 adminApp.get("/stats/outbound", async (c) => {

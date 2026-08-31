@@ -1,6 +1,6 @@
 # City seeding plan
 
-How to bring a new metro (starting with **Chicago**) to parity with SF's vertical depth. SF is the reference implementation. Chicago has Phase 1 calendars, food, comedy depth, and activities; **Movies showtimes** (TMS CHI) remain the main gap.
+How to bring a new metro to parity with SF's vertical depth. SF is the reference implementation. **Chicago** is MVP-complete (Phase 1 + food + comedy + activities + hero). **Los Angeles** is the active expansion target. **Movies showtimes** (TMS) are **deferred** for Chicago and LA until a city-scoped `movies_tms` refactor ships.
 
 ## Current state
 
@@ -35,7 +35,7 @@ How to bring a new metro (starting with **Chicago**) to parity with SF's vertica
 
 | Gap | SF reference | Priority |
 |---|---|---|
-| Movies showtimes | `movies_tms` (zip `60601`) | **P0 for Movies topic** — CHI only gets event listings until TMS |
+| Movies showtimes | `movies_tms` (zip `60601`) | **Deferred** — CHI only gets event-tagged listings until TMS CHI |
 | Indie cinema | `indie_theater` (Roxie pattern) | **P2** — Music Box, Gene Siskel, etc. |
 | Instagram food | `instagram` curated handles | **P2** — optional without Graph API keys |
 | Newsletters | `newsletter` RSS | **P3** — harder to parse; low ROI initially |
@@ -117,8 +117,43 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_chi,c
 
 **Movies topic in Chicago:** still weak until Phase D (TMS CHI) — `topics=movies` may only surface Eventbrite/festival listings tagged `movies`, not poster showtime cards.
 
+### Los Angeles — MVP status
 
-### Phase A — Food tips (P0) ✅
+**Slug:** `la` (`/la`, `area=la`). **Movies TMS deferred** (same as Chicago).
+
+Phase 1 + food + comedy + activities + hero shipped in code. Live adapters:
+
+| Adapter id | Source chip | Notes |
+|---|---|---|
+| `ticketmaster_la` | ticketmaster | CA geo, 50mi around DTLA |
+| `luma_la` | luma | Discover LA place id |
+| `ra_la` | ra | RA area id 18 |
+| `19hz_la` | 19hz | `eventlisting_LosAngeles.php` |
+| `eventbrite_la` | eventbrite | `ca--los-angeles` slug |
+| `dola` | dola | DoLA local calendar (all events; `is_free` → Free topic) |
+| `comedy_venue_la` | ticketmaster | Comedy Store, Laugh Factory, Improv, … |
+| `recurring` | recurring | LA rooms in `recurring_shows` seed |
+| `food` / `food_deals` | food | Eater LA + Infatuation LA; curated deals |
+| `activities` | activities | `CURATED_ACTIVITIES_LA` (22 rows) |
+
+**No dedicated LA cheap-calendar HTML adapter in v1** — Free topic uses DoLA `is_free` + Eventbrite; editorial sites (Free in LA, GoHiLo) were unreachable at research time.
+
+```bash
+pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_la,luma_la,ra_la,19hz_la,eventbrite_la,dola,comedy_venue_la,recurring,food,food_deals,activities
+```
+
+**Topic smoke (`area=la`):**
+
+```bash
+curl -s 'http://127.0.0.1:4000/v1/feed?area=la&topics=concerts&mode=all&limit=5' | jq '.cards | length'
+curl -s 'http://127.0.0.1:4000/v1/feed?area=la&topics=comedy&mode=all&limit=5' | jq '.cards | length'
+curl -s 'http://127.0.0.1:4000/v1/feed?area=la&topics=food&mode=all&limit=5' | jq '.cards | length'
+curl -s 'http://127.0.0.1:4000/v1/feed?area=la&topics=activities&mode=all&limit=5' | jq '.cards | length'
+curl -s 'http://127.0.0.1:4000/v1/feed?area=la&topics=free&mode=all&limit=5' | jq '.cards | length'
+```
+
+**TZ detect:** `America/Los_Angeles` returns `null` from `feedCityFromTimeZone` (ambiguous SF vs LA) — prefer coords → prefs → default.
+
 
 **Status:** Shipped. `FOOD_METRO_CONFIGS` drives SF + Chicago via the single `food` adapter.
 
@@ -190,9 +225,11 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=recurring,comedy_v
 
 ---
 
-### Phase D — Movies (P2)
+### Phase D — Movies (deferred)
 
-**Goal:** Movie showtime cards in Chicago feed.
+**Status:** Deferred for Chicago and new metros at MVP. `movies_tms` remains SF/Bay-only (`TMS_ZIP` default `94107`).
+
+**Goal (when resumed):** Movie showtime cards in Chicago / LA feeds.
 
 **Work items:**
 
@@ -255,16 +292,18 @@ When adding city **N**:
 | 12 | **Topic smoke-test** — API checks below for `area=n` |
 | 13 | Update web city selector (already generic if `FEED_CITIES` updated) |
 | 14 | **City loading phrase** — add a metro-flavored “Gathering the …” line in `apps/web/src/app/[city]/page.tsx` (SF: fog, Chicago: wind; invent one local weather/place cue per city) |
-| 14b | **City hero** — Unsplash cover + party palette + place-specific lede in `apps/web/src/lib/city-heroes.ts` — [expansion strategy — City hero](./city-expansion-strategy.md#city-hero-web) |
+| 14b | **City hero** — Unsplash cover + party palette + place-specific lede in `apps/web/src/lib/city-heroes.ts` — [expansion strategy — City hero](./city-expansion-strategy.md#city-hero-web); run `pnpm check:city-heroes` to verify every cover URL returns 200 |
+| 14c | **Venue / locality geo** — add city + common venue centroids to `packages/shared/src/venueGeo.ts` so address-only Funcheap/scrape rows get weather + maps — [architecture](./architecture.md#event-location--weather) |
+| 14d | **Feed demotions** — no demotion-specific city lists. Rules use `eventInArea` / `FEED_AREAS` (`packages/shared/src/feedDemotion.ts`). After taxonomy is wired, existing metro filters and Admin metro dropdown pick up the new area automatically. Revisit ops rules only if a local venue needs burying — [Ranking](./ranking.md#feed-demotion-rules) |
 | 15 | Document adapters in [ingest.md](./ingest.md) |
 
 ## Suggested implementation order (Chicago)
 
 ```
-Done:    Phase A (food tips) + Phase B (food deals) + Phase C (comedy recurring + comedy_venue_chi)
-Next:    Phase D (TMS Chicago) + topic smoke tests for Movies
-Later:   Phase E (IG handles, partiful; CHI neighborhoods shipped)
-Parallel: Evergreen activities per city-expansion-strategy.md
+Done (Chicago): Phase A–C + evergreen activities + hero
+Deferred: Phase D (TMS) for CHI and LA
+Next:    Los Angeles MVP (taxonomy → Phase 1 calendars → food → comedy → activities → hero)
+Later:   Phase E polish (IG, partiful) for any metro
 ```
 
 ## Code touchpoints (quick reference)
@@ -314,7 +353,7 @@ Run after adapter category-mapping changes or when Concerts/Comedy chips return 
 2. Run topic API checks from the matrix (expect non-zero for concerts, comedy, food, happy_hours, free)
 3. Spot-check Ticketmaster rows: `music.live` / `comedy.club` present, not only `nightlife`
 4. Confirm `comedy_venue_chi` runs in Phase 1 (`runner.ts` includes it)
-5. Phase D still required for **Movies** showtime cards in Chicago
+5. Phase D deferred — **Movies** topic may stay thin until TMS ships for that metro
 
 ## Future cities
 

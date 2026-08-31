@@ -70,7 +70,8 @@ Body (`UserPrefs`):
 {
   "interests": [{ "category": "tech", "weight": 0.9 }],
   "neighborhoods": ["SOMA", "Mission"],
-  "budgetMax": 60,
+  "budgetEnabled": true,
+  "budgetTier": 2,
   "preferFree": false,
   "nightsOut": true,
   "radiusMiles": 35,
@@ -78,6 +79,8 @@ Body (`UserPrefs`):
   "lng": -122.4194
 }
 ```
+
+`budgetTier` is 1–4 (`$`–`$$$$`). When `budgetEnabled` is true, For you / Weekend hard-filter above that band. Legacy `budgetMax` (USD) is still accepted and mapped to a tier.
 
 Sets `onboardingComplete: true`.
 
@@ -102,6 +105,19 @@ Recent save/going signals for the user.
 Query: `limit`, `category`, `freeOnly=true`
 
 Upcoming events ordered by `startsAt`.
+
+### `GET /v1/seo/sitemap`
+
+Public crawl hints for the web sitemap (no auth). Query: `limit` (default 5000, max 5000).
+
+Returns upcoming timed `events` (next 90 days, `kind=event`, not hidden) and distinct `films` with future showtimes:
+
+```json
+{
+  "events": [{ "id": "uuid", "lastModified": "ISO8601" }],
+  "films": [{ "id": "uuid", "lastModified": "ISO8601" }]
+}
+```
 
 ### `GET /v1/events/:id`
 
@@ -172,7 +188,9 @@ Response:
   "prefsSummary": {
     "interests": ["tech", "comedy.underground"],
     "neighborhoods": ["SOMA"],
-    "budgetMax": 60
+    "budgetEnabled": true,
+    "budgetTier": 2,
+    "budgetMax": 45
   },
   "cards": [
     {
@@ -226,6 +244,8 @@ Requires `Authorization: Bearer <ADMIN_TOKEN>` (or `X-Admin-Token`). See [Admin]
 | GET/POST | `/v1/admin/ingest/jobs` | Queue / enqueue (`phase1` \| `all` \| `adapters`) |
 | GET | `/v1/admin/events` | Search listings |
 | GET/PATCH | `/v1/admin/events/:id` | Detail + ops edits |
+| GET/POST/PATCH/DELETE | `/v1/admin/demotion-rules` | Feed demotion rules |
+| GET | `/v1/admin/venues/suggest` | Venue name typeahead (`?q=&metro=&limit=`) |
 | GET | `/v1/admin/stats/tag-coverage` | Per-source category/tag gaps |
 | GET/POST | `/v1/admin/sponsors` | Sponsor CRM |
 | GET/PATCH | `/v1/admin/sponsors/:id` | |

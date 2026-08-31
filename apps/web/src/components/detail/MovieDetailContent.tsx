@@ -7,8 +7,15 @@ import {
   LetterboxdLogo,
   RottenTomatoesLogo,
 } from "@/components/FilmRatingBadges";
+import { EventWeatherInline } from "@/components/detail/EventWeatherInline";
 import { showtimeOutboundHref } from "@/lib/outbound";
 import { trackCtaClicked } from "@/lib/analytics";
+import { SaveButton } from "@/components/SaveButton";
+import { usePathname } from "next/navigation";
+
+const FILM_TZ = "America/Los_Angeles";
+/** Typical feature length used for weather window when runtime is unknown. */
+const DEFAULT_RUNTIME_MS = 2.5 * 60 * 60 * 1000;
 
 function reviewSourceMeta(r: FilmReview): string {
   const parts: string[] = [];
@@ -16,6 +23,14 @@ function reviewSourceMeta(r: FilmReview): string {
   if (r.author) parts.push(r.author);
   if (r.rating != null) parts.push(String(r.rating));
   return parts.join(" · ");
+}
+
+function theaterMapsQuery(theater: FilmDetail["showtimes"][number]["theater"]): string | null {
+  if (theater.lat != null && theater.lng != null) {
+    return `${theater.lat},${theater.lng}`;
+  }
+  const parts = [theater.name?.trim(), theater.address?.trim()].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
 }
 
 export function MovieDetailContent({
@@ -27,6 +42,7 @@ export function MovieDetailContent({
 }) {
   const { film, showtimes } = data;
   const reviews = film.reviews ?? [];
+  const pathname = usePathname();
 
   return (
     <div className={`detail-body ${compact ? "is-compact" : ""}`}>
@@ -44,7 +60,15 @@ export function MovieDetailContent({
           </div>
         )}
         <div>
-          <p className="eyebrow">In theaters</p>
+          <div className="detail-body__header-top">
+            <p className="eyebrow">In theaters</p>
+            <SaveButton
+              targetKind="film"
+              targetId={film.id}
+              returnTo={pathname || undefined}
+              className="detail-body__save"
+            />
+          </div>
           <h2 className="detail-body__title">
             {film.title}
             {film.year ? ` (${film.year})` : ""}
@@ -201,43 +225,106 @@ export function MovieDetailContent({
           No showtimes in window — check back after TMS ingest.
         </p>
       )}
-      {showtimes.map((s) => (
-        <div key={s.id} className="panel detail-body__showtime">
-          <strong>{s.theater.name}</strong>
-          <div className="meta">
-            {s.theater.neighborhood}
-            {s.format ? ` · ${s.format}` : ""}
+      {showtimes.map((s) => {
+        const mapsQuery = theaterMapsQuery(s.theater);
+        const mapsEmbed = mapsQuery
+          ? `https://maps.google.com/maps?q=${encodeURIComponent(mapsQuery)}&z=15&output=embed`
+          : null;
+        const mapsLink = mapsQuery
+          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsQuery)}`
+          : null;
+        const endsAt = new Date(
+          new Date(s.startsAt).getTime() + DEFAULT_RUNTIME_MS,
+        ).toISOString();
+
+        return (
+          <div key={s.id} className="panel detail-body__showtime">
+            <strong>{s.theater.name}</strong>
+            <div className="meta">
+              {[s.theater.neighborhood, s.format].filter(Boolean).join(" · ")}
+            </div>
+            <div className="times">
+              <span className="time">
+                {new Date(s.startsAt).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZone: FILM_TZ,
+                })}
+              </span>
+            </div>
+
+            <EventWeatherInline
+              startsAt={s.startsAt}
+              endsAt={endsAt}
+              timezone={FILM_TZ}
+              lat={s.theater.lat}
+              lng={s.theater.lng}
+              venueName={s.theater.name}
+              address={s.theater.address}
+              neighborhood={s.theater.neighborhood}
+              city="sf"
+              placeLabel={s.theater.neighborhood || s.theater.name}
+            />
+
+            {(s.theater.address ||
+              s.theater.neighborhood ||
+              (s.theater.lat != null && s.theater.lng != null)) && (
+              <div className="detail-body__location" style={{ marginTop: 12 }}>
+                {s.theater.address ? (
+                  <span className="meta detail-body__address">
+                    {s.theater.address}
+                  </span>
+                ) : s.theater.neighborhood ? (
+                  <span className="badge neighborhood">
+                    {s.theater.neighborhood}
+                  </span>
+                ) : null}
+                {mapsEmbed ? (
+                  <div className="detail-body__map-frame">
+                    <iframe
+                      src={mapsEmbed}
+                      title={`Map of ${s.theater.name}`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      allowFullScreen
+                    />
+                  </div>
+                ) : null}
+                {mapsLink ? (
+                  <a
+                    className="detail-body__map-link"
+                    href={mapsLink}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open in Google Maps
+                  </a>
+                ) : null}
+              </div>
+            )}
+
+            {s.ticketUrl && (
+              <p style={{ marginTop: 10 }}>
+                <a
+                  className="btn primary"
+                  href={showtimeOutboundHref(s.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() =>
+                    trackCtaClicked({
+                      kind: "showtime",
+                      id: s.id,
+                      slot: "tickets",
+                    })
+                  }
+                >
+                  Tickets
+                </a>
+              </p>
+            )}
           </div>
-          <div className="times">
-            <span className="time">
-              {new Date(s.startsAt).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-                timeZone: "America/Los_Angeles",
-              })}
-            </span>
-          </div>
-          {s.ticketUrl && (
-            <p style={{ marginTop: 10 }}>
-              <a
-                className="btn primary"
-                href={showtimeOutboundHref(s.id)}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() =>
-                  trackCtaClicked({
-                    kind: "showtime",
-                    id: s.id,
-                    slot: "tickets",
-                  })
-                }
-              >
-                Tickets
-              </a>
-            </p>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

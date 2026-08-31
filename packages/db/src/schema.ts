@@ -11,12 +11,16 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const users = pgTable("users", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  email: varchar("email", { length: 255 }),
-  displayName: varchar("display_name", { length: 120 }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 255 }),
+    displayName: varchar("display_name", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("users_email_unique_idx").on(t.email)],
+);
 
 export const userProfiles = pgTable("user_profiles", {
   userId: uuid("user_id")
@@ -27,7 +31,12 @@ export const userProfiles = pgTable("user_profiles", {
     .notNull()
     .default([]),
   neighborhoods: jsonb("neighborhoods").$type<string[]>().notNull().default([]),
+  /** Legacy USD ceiling — kept for back-compat; prefer budgetTier + budgetEnabled. */
   budgetMax: integer("budget_max"),
+  /** Max price band 1–4 ($–$$$$). */
+  budgetTier: integer("budget_tier"),
+  /** When false, budgetTier is preference-only and does not hard-filter. */
+  budgetEnabled: boolean("budget_enabled").default(false).notNull(),
   preferFree: boolean("prefer_free").default(false),
   nightsOut: boolean("nights_out").default(true),
   radiusMiles: integer("radius_miles").default(15),
@@ -104,6 +113,32 @@ export const sponsors = pgTable("sponsors", {
   notes: text("notes"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Ops feed demotion rules — soft-bury matching listings (still shown) and
+ * optionally cap how many cards from one venue appear in a feed response.
+ * Managed via /admin/demotions; applied in @bored/shared ranker.
+ */
+export const feedDemotionRules = pgTable("feed_demotion_rules", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  /** Metro slug filter: sf | bay | chicago | null = all */
+  metro: varchar("metro", { length: 32 }),
+  /** Exact ingest source id (e.g. funcheap); null = any */
+  source: varchar("source", { length: 64 }),
+  /** Case-insensitive substring on venue_name */
+  venueContains: text("venue_contains"),
+  /** Case-insensitive substring on any category id */
+  categoryContains: text("category_contains"),
+  /** Multiply organic score (0–1). Lower = bury further. */
+  scoreMultiplier: doublePrecision("score_multiplier").notNull().default(0.35),
+  /** Max cards from the same venue in one feed; null = no venue cap */
+  maxPerVenue: integer("max_per_venue"),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const recurringShows = pgTable("recurring_shows", {
@@ -214,14 +249,49 @@ export const showtimes = pgTable(
   ],
 );
 
-export const signals = pgTable("signals", {
+export const signals = pgTable(
+  "signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    targetKind: varchar("target_kind", { length: 20 }).notNull(),
+    targetId: uuid("target_id").notNull(),
+    type: varchar("type", { length: 20 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("signals_user_target_type_idx").on(
+      t.userId,
+      t.targetKind,
+      t.targetId,
+      t.type,
+    ),
+  ],
+);
+
+/** One-time magic link tokens (hashed at rest). */
+export const authTokens = pgTable("auth_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+  anonymousUserId: uuid("anonymous_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Long-lived bearer sessions (hashed at rest). */
+export const sessions = pgTable("sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  targetKind: varchar("target_kind", { length: 20 }).notNull(),
-  targetId: uuid("target_id").notNull(),
-  type: varchar("type", { length: 20 }).notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

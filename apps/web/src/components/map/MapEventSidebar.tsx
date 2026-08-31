@@ -12,7 +12,9 @@ import {
 import type { FeedCard, FeedTopic } from "@bored/shared";
 import {
   eventScanTagsForDisplay,
-  isHappeningNow,
+  isExhibitionTag,
+  isFeedEventLive,
+  isTimeTbaTag,
   primaryEventType,
   registrationStatusLabel,
 } from "@bored/shared";
@@ -255,7 +257,13 @@ function MapSidebarList({
           </h2>
           <ul className="map-sidebar__events">
             {group.cards.map((card) => {
-              const live = isHappeningNow(card.startsAt, card.endsAt, now);
+              const live = isFeedEventLive(card.startsAt, card.endsAt, now, {
+                tags: card.tags,
+              });
+              const isTimeTba = isTimeTbaTag(card.tags);
+              const tbaWhen = isTimeTba
+                ? card.recommendationLabel?.trim() || "Times vary"
+                : null;
               const place = [card.venueName, card.neighborhood]
                 .filter(Boolean)
                 .join(" · ");
@@ -295,6 +303,8 @@ function MapSidebarList({
                       <div className="map-sidebar__event-meta">
                         {live ? (
                           <LiveNowBadge />
+                        ) : isTimeTba ? (
+                          <span>{tbaWhen}</span>
                         ) : (
                           <time dateTime={card.startsAt}>
                             {formatTime(card.startsAt, timeZone)}

@@ -1,23 +1,33 @@
+import {
+  clearAuthSession,
+  getOrCreateAnonymousUserId,
+  getSessionToken,
+  isUuid,
+} from "@/lib/user-id";
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.trim() || "http://localhost:4000";
 
-const DEFAULT_DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
-
-export const DEMO_USER_ID =
-  process.env.NEXT_PUBLIC_DEMO_USER_ID?.trim() || DEFAULT_DEMO_USER_ID;
+export type ApiInit = RequestInit & {
+  userId?: string;
+  /** Skip attaching stored session (e.g. verify before session is saved). */
+  skipSession?: boolean;
+};
 
 function resolveUserId(explicit?: string): string {
-  const raw = explicit?.trim() || DEMO_USER_ID;
-  return /^[0-9a-f-]{36}$/i.test(raw) ? raw : DEFAULT_DEMO_USER_ID;
+  const raw = explicit?.trim() || getOrCreateAnonymousUserId();
+  return isUuid(raw) ? raw : getOrCreateAnonymousUserId();
 }
 
-export async function api<T>(
-  path: string,
-  init?: RequestInit & { userId?: string },
-): Promise<T> {
+export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
   headers.set("X-User-Id", resolveUserId(init?.userId));
+
+  if (!init?.skipSession) {
+    const session = getSessionToken();
+    if (session) headers.set("Authorization", `Bearer ${session}`);
+  }
 
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -29,4 +39,16 @@ export async function api<T>(
     throw new Error(`${res.status} ${path}: ${text}`);
   }
   return res.json() as Promise<T>;
+}
+
+export async function apiLogout(): Promise<void> {
+  const session = getSessionToken();
+  if (session) {
+    try {
+      await api("/v1/auth/logout", { method: "POST" });
+    } catch {
+      /* best effort */
+    }
+  }
+  clearAuthSession();
 }

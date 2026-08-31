@@ -166,8 +166,10 @@ Add these steps to the [adapter refactor checklist](./city-seeding.md#adapter-re
 | A6 | Set `categories[]` on every activity row (`outdoors`, `arts`, `food`, …) for topic chips — [ingest contract](./ingest.md#category-mapping-for-topic-filters) |
 | A7 | Document iconic vs local split in PR / seed notes for future editors |
 | A8 | Ship **metro neighborhood chips** (`N_NEIGHBORHOODS` + `neighborhoodsForCity`) — [Tastes / neighborhoods](#tastes--neighborhoods-onboarding) |
+| A9 | **Local weather geo** — extend `venueGeo.ts` with metro localities / common venues so address-only listings get weather + maps — [architecture — Event location & weather](./architecture.md#event-location--weather) |
+| A10 | **Feed demotions** — do **not** hardcode city lists in demotion matching. Rules resolve metro via `eventInArea` / `FEED_AREAS` (`feedDemotion.ts`). Adding a city to taxonomy is enough for metro filters + Admin area dropdown; only create ops rules when a local venue needs burying — [Ranking](./ranking.md#feed-demotion-rules), [city-seeding §14d](./city-seeding.md#adapter-refactor-checklist-reusable-for-any-new-city) |
 
-**Acceptance:** ≥15 evergreen activity cards per metro, both audience layers represented, detail page enriches from source URL when available.
+**Acceptance:** ≥15 evergreen activity cards per metro, both audience layers represented, detail page enriches from source URL when available. Address-only listings in the metro still show **local** weather (not downtown of another city).
 
 ## Tastes / neighborhoods (onboarding)
 
@@ -180,14 +182,17 @@ Neighborhood chips on **Edit tastes** must be **metro-specific**. SF Mission pil
 | **Resolver** | `neighborhoodsForCity(city)` | Single entry point for web + API |
 | **Defaults** | `defaultNeighborhoodsForCity(city)` | Empty-profile defaults (not hard-coded Mission/North Beach) |
 | **UI** | `apps/web/src/app/onboarding/page.tsx` | Resolve city from `readFeedPrefs()` / `metroFromArea`; filter saved prefs to the active metro’s list; save `lat`/`lng`/`radiusMiles` from that metro’s `*_DEFAULT` |
+| **Hint copy** | `tastesNeighborhoodHint(city)` in `taxonomy.ts` | Under neighborhood chips: `{TASTES_METRO_LABELS[city]} — switch city on the feed to edit the other metro.` Must track the active feed metro — never hard-code SF. |
+| **Metro labels** | `TASTES_METRO_LABELS` | SF uses **SF / Bay** (chips include East Bay / Peninsula); other metros use their city name. Extend when adding a feed city. |
 | **API** | `GET /v1/meta/taxonomy` → `neighborhoodsByCity` | Flat `neighborhoods` remains SF-only for legacy; prefer `neighborhoodsByCity` |
 
 When adding city **N**:
 
 1. Add `N_NEIGHBORHOODS` (≈12–20 chips locals actually choose)
 2. Extend `neighborhoodsForCity` / `defaultNeighborhoodsForCity`
-3. Add `neighborhoodsByCity.n` on taxonomy meta
-4. Keep chip names in sync with adapter `neighborhood` strings so ranking prefs match rows
+3. Add `TASTES_METRO_LABELS.n` (onboarding hint under neighborhood pills)
+4. Add `neighborhoodsByCity.n` on taxonomy meta
+5. Keep chip names in sync with adapter `neighborhood` strings so ranking prefs match rows
 
 **Acceptance:** With feed city = Chicago, `/onboarding` shows only Chicago neighborhoods and saving recenters ranking geo on `CHI_DEFAULT`.
 
@@ -212,8 +217,9 @@ Every metro needs a **place-specific feed hero** — not a generic “what’s o
 | San Francisco | Foghorn nights, Mission dance floors, and comedy that runs late. |
 | Bay Area | East Bay warehouses, Peninsula stages, and everything between the bridges. |
 | Chicago | Lakefront golden hour, warehouse bass, and rooms that laugh all week. |
+| Los Angeles | Hillside sunsets, taco trucks, and rooms that run late in Hollywood. |
 
-When adding city **N**, ship hero image + palette + lede in the same PR as the web city selector.
+When adding city **N**, ship hero image + palette + lede in the same PR as the web city selector. Run `pnpm check:city-heroes` — every Unsplash `src` must return HTTP 200 (photos get removed from CDN over time).
 
 ### SF status — shipped ✅
 
@@ -229,6 +235,14 @@ When adding city **N**, ship hero image + palette + lede in the same PR as the w
 - **Things to do** topic chip (`topics=activities`) — not a source chip
 - Includes Pilsen murals, Puttery mini-golf, Emporium/Replay arcade bars, Politan Row, Diversey range, and lakefront/park loops
 - City hero: Unsplash cover + party FX + Chicago lede
+- **Movies TMS deferred** — metro otherwise launch-ready for taste-driven users
+
+### Los Angeles status — MVP complete
+
+- Slug `la` on `FEED_CITIES`; Phase 1 adapters (`ticketmaster_la`, `luma_la`, `ra_la`, `19hz_la`, `eventbrite_la`, `comedy_venue_la`)
+- Food tips (Eater LA + Infatuation), curated deals, comedy recurring + `comedy_venue_la`
+- `CURATED_ACTIVITIES_LA` (22 rows) + hero (“Gathering the haze…”); Movies TMS deferred at MVP
+- Topic smoke verified: concerts, comedy, food, activities, free (`area=la`)
 
 ## Priority vs other verticals
 

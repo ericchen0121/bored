@@ -28,12 +28,12 @@
       "importance": "medium"
     },
     {
-      "description": "Local dev stack",
+      "description": "Local dev stack — user-owned terminals",
       "examples": [
-        "Run one supervised stack: pnpm dev (scripts/dev.sh) — frees :3000/:4000, auto-restarts on crash.",
-        "After .env changes: pnpm dev:restart. Do not spawn multiple dev:api tabs.",
-        "After API/ingest/shared/db changes that need a restart: restart :4000 yourself (kill port, pnpm dev:api, curl /health) — do not ask the user.",
-        "See docs/development.md."
+        "User runs servers in their own Cursor terminals: pnpm dev:api (:4000) and pnpm dev:web (:3000). Prefer hot reload; do not restart after ordinary edits.",
+        "Agents must NEVER start, restart, stop, kill, or free ports for the local stack (no pnpm dev / dev:restart / pkill / nohup) unless the user explicitly asks in that message.",
+        "If the site is down, tell the user what to run in their terminals — do not take over the servers.",
+        "See .cursor/rules/dev-hot-reload.mdc and docs/development.md."
       ],
       "importance": "high"
     },

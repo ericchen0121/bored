@@ -120,7 +120,7 @@ Every normalized row must set `city` (canonical slug via `cityKeyFromLabel`) so 
 | **Food — evergreen tips** | ✅ `food`, `instagram` | ✅ `food` | `food` category → **Food & drink** topic |
 | **Food — happy hour / lunch** | ✅ `food_deals` | ✅ `food_deals` | **Happy hours** topic (`dealKind`) |
 | **Activities — evergreen** | ✅ `activities` | ✅ `activities` | `outdoors` / `arts` → Arts & culture topic |
-| Movies / showtimes | ✅ `movies_tms`, `indie_theater` (Roxie) | ❌ | **Movies** topic = showtime cards (SF only until TMS CHI) |
+| Movies / showtimes | ✅ `movies_tms`, `indie_theater` (Roxie) | Deferred (TMS CHI) | **Movies** topic = showtime cards (SF only; CHI/LA deferred) |
 | Newsletters | ✅ `newsletter` | ❌ | Broke-Ass / Eddie's List RSS |
 
 Topic filter contract for all rows: [ingest.md — Category mapping](./ingest.md#category-mapping-for-topic-filters). Chicago backfill: [city-seeding.md — Topic filter categorization](./city-seeding.md#topic-filter-categorization-every-metro).
@@ -254,9 +254,30 @@ Two timezone concepts — do not conflate them:
 
 **Live / happening now:** compare UTC instants — `Date.now()` vs `[startsAt, endsAt)` via `isHappeningNow()` in `packages/shared/src/datetime.ts`. Metro TZ is **not** needed for the live check (an SF 7pm start and a Chicago 7pm start are already different UTC values). If `endsAt` is missing, assume **3 hours** (`DEFAULT_EVENT_DURATION_MS`).
 
-**Earlier today (web):** when browsing Today, the API returns the full local day. The client (`ByTimeFeed` + `collapseEarlier`) hides finished non-live rows behind “View earlier” / “Hide earlier”. Live events stay in the main list with `LiveNowBadge`.
+**Feed “live” badge:** UI and ranker use `isFeedEventLive()` (`packages/shared/src/exhibitions.ts`), which wraps `isHappeningNow` but **never** marks long-running exhibitions (`tags` / `rawPayload.exhibition`) or spans longer than 24h as live. Those show `Exhibition · Through …` (or similar) instead of **Now**.
 
-Helpers: `dayKey`, `calendarDayBounds`, `fromZonedTime`, `isHappeningNow`, `isEarlierEvent` — `@bored/shared`.
+**Earlier today (web):** when browsing Today, the API returns the full local day. The client (`ByTimeFeed` + `collapseEarlier`) hides finished non-live rows behind “View earlier” / “Hide earlier”. Live events stay in the main list with `LiveNowBadge`. Exhibitions stay in the main list until `endsAt` (not treated as “earlier” just because `startsAt` was months ago).
+
+Helpers: `dayKey`, `calendarDayBounds`, `fromZonedTime`, `isHappeningNow`, `isEarlierEvent`, `isFeedEventLive` — `@bored/shared`. See [Ingest → Long-running exhibitions](./ingest.md#long-running-exhibitions-dola--do312).
+
+## Event location & weather
+
+Detail weather and maps need **local** coordinates — never default to downtown SF when the listing is Oakland / Los Altos / Richmond / etc.
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 | `events.lat` / `events.lng` (or theater coords for movies) | Prefer real upstream geo |
+| 2 | Curated venue match | `resolveEventCoords` in `packages/shared/src/venueGeo.ts` |
+| 3 | Neighborhood centroid | SF hoods in the same module |
+| 4 | City / locality from `city`, `neighborhood`, or **address text** | Bay / LA / Chicago localities (e.g. Oakland, Berkeley, Pasadena) |
+
+**API:** `presentEvent` runs `resolveEventCoords` so clients get filled `lat`/`lng` when possible.
+
+**Web:** `weatherCoordsForEvent` → Open-Meteo hourly for the event window (`EventWeatherInline`). Hero weather stays metro-centered (`weatherCoordsForArea`); detail weather must follow the venue.
+
+**Contract:** If a listing has an address, neighborhood, or city string, weather should resolve. When a Funcheap/scraped row has an address but no weather, add a venue or locality needle in `venueGeo.ts` — do not special-case in the UI.
+
+**Overnight / multi-day:** `eventEndAt` rolls end forward when `endsAt` is stamped before `startsAt`; hourly strips skip past hours and cap long windows.
 
 ## Design constraints
 
@@ -267,8 +288,17 @@ Helpers: `dayKey`, `calendarDayBounds`, `fromZonedTime`, `isHappeningNow`, `isEa
 - New cities extend config + adapters; do not fork API, schema, or ranker
 - Never mix metros in a feed — `eventInArea` is the hard gate
 
+## SEO & AI discovery
+
+Public listings are **server-rendered topic hubs** at `/{city}/{topic}` (e.g. `/sf/concerts`, `/chicago/free`) — not client-only `?topics=` filters. Each hub fetches `GET /v1/feed?mode=all&topics=…`, renders crawlable HTML + `ItemList` / `FAQPage` JSON-LD, and links to `/events/:id` detail pages (which carry `Event` JSON-LD).
+
+**Do not** index raw ingest tags (`/tags/techno`) — tags include adapter noise; topic filters use curated `FEED_TOPICS`.
+
+AI / AEO surfaces: `/llms.txt`, `/llms-full.txt` (live samples), `/ai.txt`, city/topic RSS at `/feed/…`, plus `sitemap.xml` and `robots.txt`. See [SEO & AI discovery](./seo.md).
+
 ## Related docs
 
+- [SEO & AI discovery](./seo.md)
 - [API reference](./api.md)
 - [Ingest sources](./ingest.md)
 - [City seeding plan](./city-seeding.md)

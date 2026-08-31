@@ -1,15 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import {
   defaultAreaForCity,
+  defaultFeedMode,
   feedFilterSourcesForCity,
   feedModeAllowsDate,
   metroFromArea,
   parseFeedSources,
   parseFeedTopics,
 } from "@bored/shared";
+import { useUser } from "@/components/UserProvider";
 import { detectFeedArea } from "@/lib/detect-city";
 import {
   areaFromCityPath,
@@ -24,11 +27,13 @@ import { parseFeedDate } from "@/lib/datetime";
 
 /**
  * Legacy `/` and cold-start entry: resolve city from query / prefs / geo,
- * then replace with `/{city}?…`.
+ * then replace with `/{city}?…`. Defaults to Today; For you when signed in
+ * with tastes.
  */
 function RootRedirectInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { ready, authenticated, onboardingComplete } = useUser();
 
   useEffect(() => {
     let cancelled = false;
@@ -82,17 +87,20 @@ function RootRedirectInner() {
         return;
       }
 
+      if (!ready) return;
+
       const detected = await detectFeedArea();
       if (cancelled) return;
-      rememberFeedPrefs("for_you", detected, [], null, []);
-      router.replace(feedHomeHref("for_you", detected, [], null, []));
+      const mode = defaultFeedMode({ authenticated, onboardingComplete });
+      rememberFeedPrefs(mode, detected, [], null, []);
+      router.replace(feedHomeHref(mode, detected, [], null, []));
     }
 
     void resolve();
     return () => {
       cancelled = true;
     };
-  }, [router, searchParams]);
+  }, [router, searchParams, ready, authenticated, onboardingComplete]);
 
   return <p className="muted">Finding your city…</p>;
 }

@@ -78,6 +78,7 @@ export function areaFromCityPath(
   areaParam: string | null | undefined,
 ): FeedArea {
   if (city === "chicago") return "chicago";
+  if (city === "la") return "la";
   if (areaParam === "sf") return "sf";
   if (areaParam === "bay") return "bay";
   return defaultAreaForCity(city);
@@ -177,7 +178,7 @@ export function feedHomeHref(
 ): string {
   const stored = readFeedPrefs();
   const prefs: FeedPrefs = {
-    mode: mode ?? stored?.mode ?? "for_you",
+    mode: mode ?? stored?.mode ?? "today",
     area: area ?? stored?.area ?? defaultAreaForCity("sf"),
     sources: sources ?? stored?.sources ?? [],
     topics: topics ?? stored?.topics ?? [],
@@ -198,7 +199,7 @@ export function feedMapHref(
 ): string {
   const stored = readFeedPrefs();
   const prefs: FeedPrefs = {
-    mode: mode ?? stored?.mode ?? "for_you",
+    mode: mode ?? stored?.mode ?? "today",
     area: area ?? stored?.area ?? defaultAreaForCity("sf"),
     sources: sources ?? stored?.sources ?? [],
     topics: topics ?? stored?.topics ?? [],
@@ -207,4 +208,9 @@ export function feedMapHref(
   const city = metroFromArea(prefs.area);
   const q = feedQueryString(prefs);
   return q ? `/${city}/map?${q}` : `/${city}/map`;
+}
+
+/** SEO topic listing hub — path-based, server-rendered. */
+export function topicHubHref(city: FeedCity, topic: FeedTopic): string {
+  return `/${city}/${topic}`;
 }

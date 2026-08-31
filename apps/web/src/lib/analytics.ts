@@ -161,7 +161,28 @@ export function trackOnboardingCompleted(props: {
   city: string;
   interest_count: number;
   neighborhood_count: number;
-  budget_max: number;
+  budget_enabled: boolean;
+  budget_tier: number;
 }): void {
   track("onboarding_completed", props);
+}
+
+export function trackEventSaved(props: {
+  targetKind: string;
+  targetId: string;
+}): void {
+  track("event_saved", props);
+}
+
+export function trackEventUnsaved(props: {
+  targetKind: string;
+  targetId: string;
+}): void {
+  track("event_unsaved", props);
+}
+
+export function trackAuthMagicLinkRequested(props: {
+  surface: string;
+}): void {
+  track("auth_magic_link_requested", props);
 }

@@ -59,7 +59,7 @@ All three app services build from the **repo root** `Dockerfile`.
 | `BROWSER_IMAGE_SCRAPE` | ingest | `0` until Chromium installed (`INSTALL_PLAYWRIGHT=1`) |
 | `INGEST_RUN_ON_BOOT` | ingest | Set `1` to run Phase 1 once when the worker starts |
 | `NEXT_PUBLIC_API_URL` | web (**build**) | Public API URL, e.g. `https://api-….up.railway.app` |
-| `NEXT_PUBLIC_SITE_URL` | web (**build**) | Public web origin for OG/share cards, e.g. `https://bored-app.up.railway.app` |
+| `NEXT_PUBLIC_SITE_URL` | web (**build**) | **Required in production.** Public web origin for canonical URLs, JSON-LD, OG/share cards, sitemap, and `llms.txt` (e.g. `https://bored-app.up.railway.app`) |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | web (**build**) | Map page |
 | `NEXT_PUBLIC_POSTHOG_KEY` | web (**build**) | Product analytics (optional) |
 | `NEXT_PUBLIC_POSTHOG_HOST` | web (**build**) | PostHog host; default `https://us.i.posthog.com` |

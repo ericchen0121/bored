@@ -26,6 +26,7 @@ pnpm ingest
 | `/admin` | Ingest adapters, last-run status, static schedule view, enqueue Phase 1 / all / single adapter |
 | `/admin/listings` | Search listings, tag coverage by source |
 | `/admin/listings/:id` | Edit title/description/tags/categories/URLs, hide, attach sponsor boost |
+| `/admin/demotions` | Feed demotion rules (create/edit, score bury + per-venue cap, venue typeahead) |
 | `/admin/sponsors` | CRM list + inventory (active / stale boosts) |
 | `/admin/sponsors/:id` | Edit package, attach/clear boosts, 2-week trial preset |
 | `/admin/reports` | Outbound click rollups (`outbound_clicks`) for sales |
@@ -45,6 +46,7 @@ If `ADMIN_TOKEN` is unset, admin APIs return **503**.
 ## Schema notes
 
 - `events.hidden` — soft-hide from public feed/detail; ingest upserts do not clear it.
+- `feed_demotion_rules` — ops soft-bury + optional per-venue feed caps (see [Ranking](./ranking.md)).
 - `ingest_jobs` — admin trigger queue.
 - Sponsors / boosts reuse existing `sponsors` + `events.is_sponsored` columns (see [Monetization](./monetization.md)).
 

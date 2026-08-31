@@ -51,6 +51,15 @@ Checklist of data-model and ingest inefficiencies to fix before (or right after)
 | **Problem** | One attraction × many performance days flooded the feed (exhibitions, long comedy sits). |
 | **Fix** | After same-day coalesce, `capMultiDayRuns` keeps the next **7** distinct local days per title+venue; marks `runTruncated` / `runDayCount` on payload; dropped day ids deleted as orphans. |
 
+### 4b. DoLA / Do312 exhibitions as durable runs `[x]`
+
+| | |
+|---|---|
+| **Problem** | Discover LA / Do Stuff emit months-long installations as daily timed rows (early `begin_time`, no end) → false **Now** badge and top-of-Today spam. |
+| **Fix** | Detect exhibitions; collapse to one durable row with `rawPayload.exhibition`; feed expand + overlap window; `isFeedEventLive` skips live badge; prune/purge preserve ongoing runs; optional curated `activities` tip for flagship installs. |
+| **Files** | `packages/shared/src/exhibitions.ts`, `doStuffMedia.ts`, `runner.ts`, feed expand in `apps/api`, UI live helpers |
+| **Docs** | [Ingest — Long-running exhibitions](./ingest.md#long-running-exhibitions-dola--do312) |
+
 ---
 
 ## P2 — Feed & tip hygiene
@@ -131,7 +140,7 @@ psql "$DATABASE_URL" -c "SELECT COUNT(*) FILTER (WHERE source_event_id ~ '^(tick
 pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=recurring,food_deals,ticketmaster,comedy_venue
 ```
 
-Feed: Comedy / For you → one card per room; By time → room appears under each matching weekday without duplicate DB rows. Long exhibitions show ≤7 upcoming days (one row per day).
+Feed: Comedy / For you → one card per room; By time → room appears under each matching weekday without duplicate DB rows. Ticketmaster multi-day sits show ≤7 upcoming days (one row per day). DoLA Discover LA installations are one durable exhibition card (`Through …`), not daily live rows.
 
 ---
 

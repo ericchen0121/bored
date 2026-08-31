@@ -4,14 +4,14 @@
 
 export type FoodMetroConfig = {
   /** Canonical metro slug stored on events.city */
-  metro: "sf" | "chicago";
+  metro: "sf" | "chicago" | "la";
   /** Default city when geo cannot be inferred from content */
   defaultCity: string;
   eater: {
     feedUrl: string;
     organizer: string;
     /** Tag + rawPayload.outlet key */
-    outletTag: "eater_sf" | "eater_chi";
+    outletTag: "eater_sf" | "eater_chi" | "eater_la";
   };
   infatuation: {
     reviewsUrl: string;
@@ -52,6 +52,19 @@ export const FOOD_METRO_CONFIGS: readonly FoodMetroConfig[] = [
     infatuation: {
       reviewsUrl: "https://www.theinfatuation.com/chicago/reviews",
       canonicalPath: "/chicago",
+    },
+  },
+  {
+    metro: "la",
+    defaultCity: "la",
+    eater: {
+      feedUrl: "https://la.eater.com/rss/index.xml",
+      organizer: "Eater LA",
+      outletTag: "eater_la",
+    },
+    infatuation: {
+      reviewsUrl: "https://www.theinfatuation.com/los-angeles/reviews",
+      canonicalPath: "/los-angeles",
     },
   },
 ] as const;

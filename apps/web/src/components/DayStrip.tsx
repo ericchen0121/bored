@@ -11,6 +11,7 @@ export function DayStrip({
   timeZone,
   selectedDate,
   daysWithEvents,
+  dayCounts,
   minDate,
   maxDate,
   onSelect,
@@ -21,6 +22,8 @@ export function DayStrip({
   timeZone: string;
   selectedDate: string | null;
   daysWithEvents: Set<string>;
+  /** Optional per-day counts shown under the date (e.g. saved events). */
+  dayCounts?: Map<string, number> | Record<string, number>;
   minDate: string;
   maxDate: string;
   onSelect: (date: string | null) => void;
@@ -40,6 +43,13 @@ export function DayStrip({
     return stripKeys.map((key) => dayCardLabel(key, timeZone));
   }, [stripKeys, timeZone]);
 
+  const countFor = (key: string): number | null => {
+    if (!dayCounts) return null;
+    const n =
+      dayCounts instanceof Map ? dayCounts.get(key) : dayCounts[key];
+    return n && n > 0 ? n : null;
+  };
+
   const calendarSelectionActive =
     selectedDate != null && !isDateInStrip(selectedDate, stripKeys);
 
@@ -58,6 +68,8 @@ export function DayStrip({
       )}
       {days.map((day) => {
         const active = selectedDate === day.key && !calendarSelectionActive;
+        const count = countFor(day.key);
+        const hasEvents = daysWithEvents.has(day.key) || count != null;
         return (
           <button
             key={day.key}
@@ -66,19 +78,39 @@ export function DayStrip({
               day.isToday ? "is-today" : ""
             } ${
               highlightWeekend && day.isWeekend ? "day-card--weekend" : ""
-            } ${daysWithEvents.has(day.key) ? "has-events" : ""}`}
+            } ${hasEvents ? "has-events" : ""}`}
             onClick={() => onSelect(active ? null : day.key)}
             aria-pressed={active}
             aria-label={
               day.isToday
-                ? `Today, ${day.dateLine}${daysWithEvents.has(day.key) ? ", has events" : ""}`
-                : `${day.weekday}, ${day.dateLine}${daysWithEvents.has(day.key) ? ", has events" : ""}`
+                ? `Today, ${day.dateLine}${
+                    count != null
+                      ? `, ${count} saved`
+                      : hasEvents
+                        ? ", has events"
+                        : ""
+                  }`
+                : `${day.weekday}, ${day.dateLine}${
+                    count != null
+                      ? `, ${count} saved`
+                      : hasEvents
+                        ? ", has events"
+                        : ""
+                  }`
             }
           >
             <span className="day-card__weekday">
               {day.isToday ? "Today" : day.weekday}
             </span>
             <span className="day-card__date">{day.dateLine}</span>
+            {dayCounts ? (
+              <span
+                className={`day-card__count${count == null ? " is-empty" : ""}`}
+                aria-hidden={count == null}
+              >
+                {count ?? "\u00a0"}
+              </span>
+            ) : null}
           </button>
         );
       })}

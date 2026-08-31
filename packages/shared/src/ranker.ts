@@ -1,4 +1,14 @@
-import { dayCardLabel, dayKey, isHappeningNow } from "./datetime";
+import { exceedsBudget } from "./budget";
+import { dayCardLabel, dayKey } from "./datetime";
+import {
+  exhibitionTimeScorePenalty,
+  isFeedEventLive,
+} from "./exhibitions";
+import {
+  takeWithVenueCaps,
+  type FeedDemotionRule,
+  resolveDemotion,
+} from "./feedDemotion";
 import { haversineMiles } from "./geo";
 import type { FeedCard, UserPrefs } from "./schemas";
 
@@ -13,8 +23,25 @@ const ADJACENT: Record<string, string[]> = {
     "music.bass",
     "music.trance",
   ],
-  "music.live": ["music.electronic", "music.jazz", "music.hip_hop"],
-  "music.jazz": ["music.live", "music.electronic"],
+  "music.live": [
+    "music.electronic",
+    "music.rock",
+    "music.indie",
+    "music.jazz",
+    "music.hip_hop",
+    "music.pop",
+    "music.blues",
+  ],
+  "music.jazz": ["music.live", "music.blues", "music.rnb"],
+  "music.rock": ["music.live", "music.indie", "music.punk", "music.metal", "music.blues"],
+  "music.indie": ["music.live", "music.rock", "music.folk", "music.pop"],
+  "music.punk": ["music.live", "music.rock", "music.metal", "music.indie"],
+  "music.metal": ["music.live", "music.rock", "music.punk"],
+  "music.blues": ["music.live", "music.jazz", "music.rock", "music.rnb"],
+  "music.folk": ["music.live", "music.indie", "music.country", "music.blues"],
+  "music.country": ["music.live", "music.folk", "music.blues"],
+  "music.pop": ["music.live", "music.indie", "music.rnb", "music.hip_hop"],
+  "music.rnb": ["music.live", "music.hip_hop", "music.jazz", "music.pop"],
   "music.house": [
     "music.tech_house",
     "music.techno",
@@ -32,8 +59,8 @@ const ADJACENT: Record<string, string[]> = {
   "music.drum_and_bass": ["music.bass", "music.electronic", "nightlife"],
   "music.bass": ["music.drum_and_bass", "music.electronic", "nightlife"],
   "music.trance": ["music.electronic", "music.techno"],
-  "music.hip_hop": ["music.live", "nightlife", "music.bass"],
-  "music.latin": ["music.house", "music.electronic", "nightlife"],
+  "music.hip_hop": ["music.live", "nightlife", "music.bass", "music.rnb"],
+  "music.latin": ["music.live", "music.house", "music.electronic", "nightlife"],
   "comedy.club": ["comedy.showcase", "comedy.underground"],
   "comedy.showcase": ["comedy.club", "comedy.open_mic"],
   "comedy.open_mic": ["comedy.underground", "comedy.showcase"],
@@ -71,7 +98,9 @@ export type Rankable = {
   filmId?: string;
   ratings?: FeedCard["ratings"];
   showtimesPreview?: FeedCard["showtimesPreview"];
+  showtimesMoreCount?: number;
   source?: string | null;
+  rawPayload?: unknown;
   registrationStatus?: FeedCard["registrationStatus"];
   /** FOUND section · series framing for food tips */
   recommendationLabel?: string | null;
@@ -89,6 +118,8 @@ export type RankContext = {
   savedBoostIds?: Set<string>;
   /** Skip budget/free hard filters and distance radius cuts */
   showAll?: boolean;
+  /** Ops demotion rules (score bury + optional per-venue cap) */
+  demotionRules?: FeedDemotionRule[];
 };
 
 const CURATED_TIP_SOURCES = new Set([
@@ -175,6 +206,7 @@ function toCard(s: {
   filmId?: string;
   ratings?: FeedCard["ratings"];
   showtimesPreview?: FeedCard["showtimesPreview"];
+  showtimesMoreCount?: number;
   recommendationLabel?: string | null;
   isSponsored?: boolean;
   boostWeight?: number;
@@ -202,6 +234,7 @@ function toCard(s: {
     filmId: s.filmId,
     ratings: s.ratings,
     showtimesPreview: s.showtimesPreview,
+    showtimesMoreCount: s.showtimesMoreCount,
     recommendationLabel: s.recommendationLabel ?? null,
     isSponsored: s.isSponsored || undefined,
     boostWeight: s.boostWeight,
@@ -246,13 +279,7 @@ export function rankFeed(
     ) {
       continue;
     }
-    if (
-      !showAll &&
-      ctx.prefs.budgetMax != null &&
-      item.priceMin != null &&
-      item.priceMin > ctx.prefs.budgetMax &&
-      !isRecommendationTip(item)
-    ) {
+    if (!showAll && exceedsBudget(item, ctx.prefs)) {
       continue;
     }
 
@@ -287,14 +314,17 @@ export function rankFeed(
             : 0;
 
     const primary = Math.max(affinity, adjacent * 0.9);
+    const exhibitionPenalty = exhibitionTimeScorePenalty(item.tags, item.rawPayload);
+    const demotion = resolveDemotion(item, ctx.demotionRules);
 
-    const score = showAll
+    const rawScore = showAll
       ? t * 0.7 +
         primary * 0.2 +
         distanceBoost * 0.1 +
         saveBoost +
         trendingBoost -
-        registrationPenalty
+        registrationPenalty -
+        exhibitionPenalty
       : primary * 0.45 +
         t * 0.25 +
         distanceBoost * 0.15 +
@@ -303,7 +333,10 @@ export function rankFeed(
         ratingBoost +
         saveBoost +
         trendingBoost -
-        registrationPenalty;
+        registrationPenalty -
+        exhibitionPenalty;
+
+    const score = rawScore * demotion.scoreMultiplier;
 
     let bucket: FeedCard["bucket"] = "serendipity";
     if (affinity >= 0.55) bucket = "affinity";
@@ -316,7 +349,6 @@ export function rankFeed(
 
   if (showAll) {
     scored.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-    if (scored.length <= limit) return scored.map(toCard);
 
     // Prefer live + upcoming so a busy morning doesn't crowd out tonight.
     const liveOrUpcoming: Scored[] = [];
@@ -324,18 +356,36 @@ export function rankFeed(
     for (const s of scored) {
       if (
         s.startsAt.getTime() >= now.getTime() ||
-        isHappeningNow(s.startsAt, s.endsAt ?? null, now)
+        isFeedEventLive(s.startsAt, s.endsAt ?? null, now, {
+          tags: s.tags,
+          rawPayload: s.rawPayload,
+        })
       ) {
         liveOrUpcoming.push(s);
       } else {
         earlier.push(s);
       }
     }
-    if (liveOrUpcoming.length >= limit) {
-      return liveOrUpcoming.slice(0, limit).map(toCard);
+
+    const liveTake = takeWithVenueCaps(
+      liveOrUpcoming,
+      limit,
+      ctx.demotionRules,
+    );
+    if (liveTake.length >= limit) {
+      return liveTake.map(toCard);
     }
-    const earlierTake = earlier.slice(-(limit - liveOrUpcoming.length));
-    return [...earlierTake, ...liveOrUpcoming].map(toCard);
+    const need = limit - liveTake.length;
+    // Prefer the most recent earlier events (original slice(-need) behavior).
+    const earlierNewestFirst = [...earlier].reverse();
+    const earlierFillNewestFirst = takeWithVenueCaps(
+      earlierNewestFirst,
+      need,
+      ctx.demotionRules,
+      liveTake,
+    );
+    const earlierFill = [...earlierFillNewestFirst].reverse();
+    return [...earlierFill, ...liveTake].map(toCard);
   }
 
   scored.sort((a, b) => b.score - a.score);
@@ -367,14 +417,14 @@ export function rankFeed(
   ];
 
   for (const s of scored) {
-    if (selected.length >= limit) break;
+    if (selected.length >= limit * 2) break;
     if (used.has(s.id)) continue;
     selected.push(s);
     used.add(s.id);
   }
 
   selected.sort((a, b) => b.score - a.score);
-  return selected.slice(0, limit).map((s) =>
+  return takeWithVenueCaps(selected, limit, ctx.demotionRules).map((s) =>
     toCard({
       ...s,
       isSponsored: s.isSponsored,
@@ -417,7 +467,10 @@ export function rankForYouTopicFeed(
     const label = dayCardLabel(key, tz, now);
     const upcomingOrLive =
       item.startsAt.getTime() >= now.getTime() ||
-      isHappeningNow(item.startsAt, item.endsAt ?? null, now);
+      isFeedEventLive(item.startsAt, item.endsAt ?? null, now, {
+        tags: item.tags,
+        rawPayload: item.rawPayload,
+      });
     if (label.isWeekend && upcomingOrLive) {
       weekendItems.push(item);
     } else {

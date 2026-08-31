@@ -9,6 +9,7 @@ import {
 
 const SF_PLACE_ID = "discplace-BDj7GNbGlsF7Cka";
 const CHI_PLACE_ID = "discplace-NdGm35qFD0vaXNF";
+const LA_PLACE_ID = "discplace-OgfEAh5KgfMzise";
 
 type LumaPrice =
   | number
@@ -396,4 +397,11 @@ export const lumaChicagoAdapter = createLumaAdapter({
   description: "Luma public Chicago discover feed (covers + registration + city)",
   placeId: CHI_PLACE_ID,
   fallbackTimezone: "America/Chicago",
+});
+
+export const lumaLaAdapter = createLumaAdapter({
+  adapterId: "luma_la",
+  description: "Luma public Los Angeles discover feed (covers + registration + city)",
+  placeId: LA_PLACE_ID,
+  fallbackTimezone: "America/Los_Angeles",
 });

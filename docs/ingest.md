@@ -52,16 +52,23 @@ pnpm --filter @bored/ingest exec playwright install chromium
 | `funcheap` | sf.funcheap.com RSS | No | Free/cheap |
 | `luma` | Luma public discover JSON | No | Tech / meetups (SF place id). Pulls `cover_url` images + `registration_availability` (open / waitlist / sold-out). Detail page refreshes status via `event/get` when stale (>10m). |
 | `luma_chi` | Luma Chicago discover | No | Chicago place id; same `source=luma` |
-| `ticketmaster` | Discovery API latlong SF + 50mi | `TICKETMASTER_API_KEY` | Concerts / sports / theater; post-filters to Bay cities (CA). Same-day showtimes coalesced (native TM id kept); multi-day runs capped at **7** local days/title+venue. **Sports:** after event search, fetches each attraction via `/attractions/{id}` and stores `rawPayload.teams[]` with `homepageUrl` / `instagramUrl` / `wikiUrl` from TM `externalLinks` (detail UI prefers these; small local registry is fallback when TM has none). Backfill existing rows: `pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-sports-links`. |
-| `ticketmaster_chi` | Discovery API latlong CHI + 40mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; IL only. Same coalesce/cap + sports attraction enrich as SF. |
-| `comedy_venue` / `comedy_venue_chi` | TM keyword comedy clubs | `TICKETMASTER_API_KEY` | SF: Cobb's / Punch Line; CHI: Zanies, Laugh Factory, Comedy Bar, Second City, iO. Same coalesce/cap; orphans + legacy group-key ids pruned. |
+| `ticketmaster` | Discovery API latlong SF + 50mi | `TICKETMASTER_API_KEY` | Concerts / sports / theater; post-filters to Bay cities (CA). Maps Discovery `info` → `description` (skips `pleaseNote`). Images: prefer `fallback: false` (often TicketWeb posters) over larger category placeholders under `ticketm.net/dam/c/`. Checkout `url` may be TicketWeb — no separate TicketWeb adapter. Same-day showtimes coalesced (native TM id kept); multi-day runs capped at **7** local days/title+venue. **Sports:** after event search, fetches each attraction via `/attractions/{id}` and stores `rawPayload.teams[]` with `homepageUrl` / `instagramUrl` / `wikiUrl` from TM `externalLinks` (detail UI prefers these; small local registry is fallback when TM has none). Backfill existing rows: `pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-sports-links`. |
+| `ticketmaster_chi` | Discovery API latlong CHI + 40mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; IL only. Same coalesce/cap, `info`→description, non-fallback image pick + sports attraction enrich as SF. |
+| `comedy_venue` / `comedy_venue_chi` | TM keyword comedy clubs | `TICKETMASTER_API_KEY` | SF: Cobb's / Punch Line; CHI: Zanies, Laugh Factory, Comedy Bar, Second City, iO. Same coalesce/cap + TM image/`info` mapping; orphans + legacy group-key ids pruned. |
 | `recurring` | `recurring_shows` table | No | One durable row per active show; feed expands weekdays |
 | `movies_tms` | Gracenote TMS showtimes | `TMS_API_KEY` | Showtimes + Fandango ticket links; enrich via Letterboxd/RT scrape |
-| `do312` | Do312 events.json | No | Chicago local calendar. Soft-coalesces dual listings (shared ticket URL or same-source soft title/venue/day); orphan twins deleted after upsert — see [Same-source soft coalesce](#same-source-soft-coalesce-do312) |
+| `do312` | Do312 events.json | No | Chicago local calendar. Soft-coalesce + multi-day prune + [long-running exhibitions](#long-running-exhibitions-dola--do312) |
 | `chicago_cheap` | chicagoonthecheap.com/events/ | No | Free/cheap editorial calendar (Funcheap analog) |
 | `ra_chi` / `ra_sf` | Resident Advisor GraphQL | No | Lineup, genres, flyer, age, cost; `source=ra` |
 | `eventbrite` | Eventbrite Bay Area discovery HTML | No | SF/Oakland/SJ/Berkeley slugs via embedded `__SERVER_DATA__`; `source=eventbrite` |
 | `eventbrite_chi` | Eventbrite Chicago discovery HTML | No | Same scrape path; `source=eventbrite` |
+| `ticketmaster_la` | Discovery API latlong LA + 50mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; CA only. Same coalesce/cap, `info`→description, non-fallback image pick + sports attraction enrich as SF/CHI. |
+| `luma_la` | Luma Los Angeles discover | No | LA place id `discplace-OgfEAh5KgfMzise`; same `source=luma` |
+| `ra_la` | Resident Advisor GraphQL | No | RA area id 18; `source=ra`, `city=la` |
+| `19hz_la` | 19hz.info Los Angeles HTML (`eventlisting_LosAngeles.php`) | No | Same scrape path; `source=19hz`, `city=la` |
+| `eventbrite_la` | Eventbrite LA discovery HTML | No | Slugs `ca--los-angeles` (+ nearby); `source=eventbrite`, `city=la` |
+| `dola` | DoLA events JSON | No | Do Stuff Media local calendar; `source=dola`, `city=la`; soft-coalesce + multi-day prune + [exhibitions](#long-running-exhibitions-dola--do312) (Discover LA run dates) |
+| `comedy_venue_la` | TM keyword comedy clubs | `TICKETMASTER_API_KEY` | Comedy Store, Laugh Factory, Improv, Dynasty Typewriter, UCB, Largo, Flappers |
 
 ### Phase 2
 
@@ -72,9 +79,9 @@ pnpm --filter @bored/ingest exec playwright install chromium
 | `instagram` | Graph business discovery | `IG_ACCESS_TOKEN`, `IG_BUSINESS_USER_ID` | Curated SF handles — food influencers, reels, city accounts |
 | `openmic_agg` | SFstandup / OpenMicX | No | Inserts **inactive** recurring proposals |
 | `indie_theater` | Roxie calendar HTML | No | Day `film-strip` → film/showtimes + posters (not per-showtime events) |
-| `activities` | Curated parks, hikes, local gems | No | SF + Chicago via `curatedActivities.ts` — evergreen tips like food |
-| `food` | Infatuation + Eater RSS (+ FOUND SF) | No | Evergreen restaurant tips; SF + Chicago via `FOOD_METRO_CONFIGS` |
-| `food_deals` | Curated happy hours & lunch specials | No | SF + Chicago; one durable row per deal + feed expand |
+| `activities` | Curated parks, hikes, local gems | No | SF + Chicago + LA via `curatedActivities.ts` — evergreen tips like food |
+| `food` | Infatuation + Eater RSS (+ FOUND SF) | No | Evergreen restaurant tips; SF + Chicago + LA via `FOOD_METRO_CONFIGS` |
+| `food_deals` | Curated happy hours & lunch specials | No | SF + Chicago + LA; one durable row per deal + feed expand |
 
 ## Category mapping for topic filters
 
@@ -132,6 +139,41 @@ Do312 (and similar city calendars) often publish **two listings for one night** 
 **Feed (safety net):** `coalesceEventOccurrences` in the feed path applies the same soft pass so stragglers collapse until the next Do312 ingest GC.
 
 **Reuse:** Ticketmaster / comedy already call `coalesceNormalizedOccurrences` (now includes the soft pass). Other same-source calendars with dual listings should call `finalizeSoftCoalesceEvents` like Do312.
+
+### Long-running exhibitions (DoLA / Do312)
+
+City calendars (Do Stuff Media) and Discover LA often list **months-long installations** as a new timed row every day (bogus early-morning `begin_time`, missing `end_time`). Treated as normal events they look “live” all day and pin to the top of Today.
+
+**Shared helpers:** `packages/shared/src/exhibitions.ts` (`isExhibitionCandidate`, `finalizeDoStuffExhibitions`, `expandExhibitionRowsForFeed`, `isFeedEventLive`, `exhibitionWhenLabel`).
+
+**Ingest (`createDoStuffMediaAdapter`):**
+
+1. Parse wall clocks with `parseWallClockIso` in the adapter timezone — ignore bogus offsets in Do Stuff JSON (e.g. `-05:00` for LA).
+2. Detect exhibition candidates: Discover LA `/event/YYYY/MM/DD/…` URLs and/or copy (`exhibition`, `installation`, `lightbox`, `on view through`, …).
+3. For Discover LA detail URLs, fetch HTML and parse the schedule line (`May 9 - Nov 20, 2026 - 2027 at 4:00AM - 1:00AM`) into `runStart` / `runEnd` / optional `dailyHours`.
+4. `finalizeDoStuffExhibitions` collapses daily slots → **one durable row** per Do Stuff numeric id (stable `sourceEventId` hash). Sets:
+   - `tags` includes `exhibition`
+   - `categories` includes `arts`
+   - `startsAt` / `endsAt` = run calendar bounds (UTC)
+   - `rawPayload.exhibition` = `{ runStart, runEnd, dailyHours?, doStuffId? }`
+5. Orphan daily `sourceEventId`s deleted after upsert; `purgeLegacyCoalesceSources` + `pruneMultiDayRunsInDb` for `dola` / `do312` (same 7-day cap as Ticketmaster for non-exhibition multi-day sits).
+6. GC must **not** treat ongoing exhibitions as past: prune/purge skip rows with `raw_payload ? 'exhibition'` and `ends_at >= now()`.
+
+**Feed:**
+
+- Timed SQL also includes rows whose `[startsAt, endsAt]` **overlaps** the window (not only `startsAt` in window).
+- `expandExhibitionRowsForFeed` emits at most one card per window; sort slot uses midday (`exhibitionStartsAtForFeed`), not the 4 AM calendar slot.
+- UI: no **Now** badge (`isFeedEventLive`); label `Exhibition · Through …` via `recommendationLabel` / `exhibitionWhenLabel`.
+- Ranker applies a small exhibition score penalty so they don’t dominate For You.
+
+**Optional editorial:** flagship installations can also ship as curated `activities` rows (e.g. `la-union-station-play`) — same evergreen tip UX as parks. Prefer ingest classification for scale; curated rows for hero picks.
+
+**Smoke:**
+
+```bash
+pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=dola
+psql "$DATABASE_URL" -c "SELECT title, starts_at, ends_at, raw_payload->'exhibition' FROM events WHERE source='dola' AND tags @> '[\"exhibition\"]';"
+```
 
 ### Per-adapter checklist (new city or backfill)
 
@@ -244,16 +286,17 @@ Missing optional keys → adapter logs a warning and returns empty (seed data st
 |---|---|---|
 | 1. DB twin | `ticketImageEnrich.ts` | Same RA / Ticketmaster / Eventbrite URL already imaged |
 | 2. Plain HTTP | `ticketPageImage.ts` | Dice, Posh, Eventbrite, RA GraphQL, etc. |
-| 3. Chromium og:image | `browserOgImage.ts` | Allowlisted hosts that block plain fetch (Tixr, AXS, Eventim, Ticketmaster, Etix, …) |
+| 3. Chromium og:image | `browserOgImage.ts` | Allowlisted hosts that block plain fetch (Tixr, AXS, Eventim, Ticketmaster, TicketWeb, Etix, …) |
 
 **Rules for every metro**
 
 - Run Chromium **only on the ingest worker**, never on the API/web process. Detail-page lazy enrich uses step 1–2 only.
-- Persist `events.image_url` once; upsert keeps existing images when a later scrape returns null.
+- Persist `events.image_url` once; upsert keeps existing images when a later scrape returns null. Exception: Ticketmaster upserts may replace a stored `ticketm.net/dam/c/` category placeholder when Discovery now returns a real flyer.
 - Cap pages per run (`BROWSER_IMAGE_SCRAPE_CAP`, default 40) and concurrency (`BROWSER_IMAGE_SCRAPE_CONCURRENCY`, default 2).
 - **Do not** browser-scrape Instagram / Facebook (login walls, ToS, low hit rate).
 - Disable with `BROWSER_IMAGE_SCRAPE=0` on hosts without browsers installed; ingest still does twin + plain fetch.
 - After adding a new city calendar adapter, call `enrichEventsWithTicketImages()` the same way `19hz` does — do not fork host lists per city.
+- Ticketmaster / comedy_venue listings get flyers + About copy from Discovery at ingest (`pickTmImage` / `tmEventDescription`) — they do **not** need the ticket-page flyer pipeline unless `imageUrl` is missing.
 - One-time backfill after deploy / city launch:
 
 ```bash

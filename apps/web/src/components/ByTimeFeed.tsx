@@ -8,10 +8,12 @@ import {
   foodTipFallbackLabel,
   isActivityRecommendationSource,
   isEarlierEvent,
+  isExhibitionTag,
+  isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
-  isHappeningNow,
   isNewRestaurantRecommendationSource,
+  isTimeTbaTag,
   newRestaurantTipFallbackLabel,
   registrationStatusLabel,
 } from "@bored/shared";
@@ -74,6 +76,11 @@ function TimelineRow({
   const isActivityTip = isActivityRecommendationSource(card.source ?? "");
   const isEvergreenTip = isFoodTip || isActivityTip || isNewRestaurant;
   const isFoodDeal = isFoodDealSource(card.source);
+  const isExhibition = isExhibitionTag(card.tags);
+  const isTimeTba = isTimeTbaTag(card.tags);
+  const tbaWhen = isTimeTba
+    ? card.recommendationLabel?.trim() || "Times vary"
+    : null;
   const tipLabel = isNewRestaurant
     ? newRestaurantTipFallbackLabel(card.recommendationLabel)
     : isActivityTip
@@ -100,6 +107,15 @@ function TimelineRow({
     >
       {isEvergreenTip ? (
         <span className="timeline-row__time is-untimed">Tip</span>
+      ) : isExhibition ? (
+        <span className="timeline-row__time is-untimed">
+          {card.recommendationLabel?.replace(/^Exhibition · /, "") ??
+            "Exhibition"}
+        </span>
+      ) : isTimeTba ? (
+        <span className="timeline-row__time is-untimed">
+          {tbaWhen}
+        </span>
       ) : (
         <div className="timeline-row__time-col">
           {live ? (
@@ -120,16 +136,16 @@ function TimelineRow({
         )}
         <div className="timeline-row__copy">
           <h3>{card.title}</h3>
-          {(place || card.isFree || isEvergreenTip || isFoodDeal) && (
+          {(place || card.isFree || isEvergreenTip || isFoodDeal || isExhibition || isTimeTba) && (
             <p className="meta">
               {isEvergreenTip
                 ? tipLabel
-                : isFoodDeal
+                : isFoodDeal || isExhibition
                   ? card.recommendationLabel
                   : null}
-              {(isEvergreenTip || isFoodDeal) && place ? " · " : ""}
+              {(isEvergreenTip || isFoodDeal || isExhibition) && place ? " · " : ""}
               {place}
-              {(place || isEvergreenTip || isFoodDeal) && card.isFree ? " · " : ""}
+              {(place || isEvergreenTip || isFoodDeal || isExhibition || isTimeTba) && card.isFree ? " · " : ""}
               {card.isFree ? "Free" : ""}
             </p>
           )}
@@ -200,7 +216,9 @@ function TipSection({
               selected={isSelected(card)}
               onSelect={onSelect}
               variant={variant}
-              live={isHappeningNow(card.startsAt, card.endsAt, now)}
+              live={isFeedEventLive(card.startsAt, card.endsAt, now, {
+                tags: card.tags,
+              })}
               style={{ animationDelay: `${Math.min(i, 24) * 35}ms` }}
             />
           );
@@ -215,6 +233,14 @@ function partitionTimedCards(cards: FeedCard[], now: Date) {
   const earlier: FeedCard[] = [];
   const current: FeedCard[] = [];
   for (const card of cards) {
+    if (isExhibitionTag(card.tags) || isTimeTbaTag(card.tags)) {
+      if (card.endsAt && new Date(card.endsAt).getTime() < now.getTime()) {
+        earlier.push(card);
+      } else {
+        current.push(card);
+      }
+      continue;
+    }
     if (isEarlierEvent(card.startsAt, card.endsAt, now)) earlier.push(card);
     else current.push(card);
   }
@@ -244,7 +270,9 @@ export function FeedListView({
             selected={isSelected(card)}
             onSelect={onSelect}
             variant="text"
-            live={isHappeningNow(card.startsAt, card.endsAt, now)}
+            live={isFeedEventLive(card.startsAt, card.endsAt, now, {
+              tags: card.tags,
+            })}
             style={{ animationDelay: `${Math.min(i, 24) * 35}ms` }}
           />
         ))}
@@ -366,7 +394,9 @@ export function ByTimeFeed({
               selected={isSelected(card)}
               onSelect={onSelect}
               variant={variant}
-              live={isHappeningNow(card.startsAt, card.endsAt, now)}
+              live={isFeedEventLive(card.startsAt, card.endsAt, now, {
+                tags: card.tags,
+              })}
               style={{ animationDelay: `${Math.min(i, 24) * 35}ms` }}
             />
           );

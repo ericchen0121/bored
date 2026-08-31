@@ -14,6 +14,7 @@ const THEATERS = [
     name: "Roxie Theater",
     url: "https://www.roxie.com/calendar/",
     neighborhood: "Mission",
+    address: "3117 16th St, San Francisco, CA 94103",
     lat: 37.7647,
     lng: -122.4225,
     parse: parseRoxieCalendar,
@@ -50,6 +51,7 @@ type TheaterMeta = {
   name: string;
   url: string;
   neighborhood: string;
+  address: string;
   lat: number;
   lng: number;
 };
@@ -178,7 +180,7 @@ async function parseRoxieCalendar(
         lat: theater.lat,
         lng: theater.lng,
         sourceTheatreId: theater.id,
-        address: null,
+        address: theater.address,
       },
       showtimes: dedupeShows(shows).map((s) => ({
         startsAt: s.startsAt,

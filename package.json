@@ -18,6 +18,7 @@
     "ingest": "pnpm --filter @bored/ingest exec tsx src/cli.ts --schedule",
     "ingest:backfill-images": "pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-ticket-images",
     "typecheck": "pnpm -r typecheck",
+    "check:city-heroes": "node scripts/check-city-heroes.mjs",
     "railway:setup": "bash scripts/railway-setup.sh"
   },
   "packageManager": "pnpm@10.28.2",

@@ -98,19 +98,45 @@ export function eventOccurrences(row: OccurrenceCarrier): EventOccurrence[] {
   return [toOccurrence(row)];
 }
 
-/** Feed-card preview times — only when there are multiple showings. */
+/**
+ * Times for the listing's local calendar day (the day the feed card / detail
+ * represents). Multi-day runs store one row per day; soft-merge must not leak
+ * sibling days into the preview.
+ */
+export function eventOccurrencesOnLocalDay(
+  row: OccurrenceCarrier,
+  timezone?: string | null,
+): EventOccurrence[] {
+  const tz = timezone ?? row.timezone ?? "America/Los_Angeles";
+  const day = dayKey(row.startsAt, tz);
+  return eventOccurrences(row).filter((o) => dayKey(o.startsAt, tz) === day);
+}
+
+/** Max times shown on a feed card; full schedule lives on event details. */
+export const FEED_TIMES_PREVIEW_LIMIT = 3;
+
+export type EventTimePreview = {
+  startsAt: string;
+  theaterName: string;
+  ticketUrl: string | null;
+};
+
+/** Feed-card preview times — only when there are multiple showings that day. */
 export function eventTimesPreview(
   row: OccurrenceCarrier,
   venueName?: string | null,
-): { startsAt: string; theaterName: string; ticketUrl: string | null }[] | undefined {
-  const occurrences = eventOccurrences(row);
+): { times: EventTimePreview[]; moreCount: number } | undefined {
+  const occurrences = eventOccurrencesOnLocalDay(row);
   if (occurrences.length <= 1) return undefined;
   const name = venueName ?? row.venueName ?? "";
-  return occurrences.map((o) => ({
-    startsAt: o.startsAt,
-    theaterName: name,
-    ticketUrl: o.url ?? null,
-  }));
+  return {
+    times: occurrences.slice(0, FEED_TIMES_PREVIEW_LIMIT).map((o) => ({
+      startsAt: o.startsAt,
+      theaterName: name,
+      ticketUrl: o.url ?? null,
+    })),
+    moreCount: Math.max(0, occurrences.length - FEED_TIMES_PREVIEW_LIMIT),
+  };
 }
 
 /** Stable hash input for grouping same title + venue + local day. */

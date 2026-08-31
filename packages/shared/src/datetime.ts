@@ -2,6 +2,16 @@
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Ingest tag when a source has a calendar day but no wall-clock start
+ * (Ticketmaster `timeTBA` / `noSpecificTime`, etc.). Feed UI shows day-only.
+ */
+export const TIME_TBA_TAG = "time_tba";
+
+export function isTimeTbaTag(tags: string[] | null | undefined): boolean {
+  return Boolean(tags?.some((t) => t.trim().toLowerCase() === TIME_TBA_TAG));
+}
+
 export function parseFeedDate(
   value: string | null | undefined,
 ): string | null {
@@ -107,11 +117,16 @@ export function calendarDayBounds(
  */
 export const DEFAULT_EVENT_DURATION_MS = 3 * 60 * 60 * 1000;
 
+const MS_PER_DAY = 86400000;
+
 function asDate(value: string | Date): Date {
   return typeof value === "string" ? new Date(value) : value;
 }
 
-/** Effective end instant: `endsAt` or start + default duration. */
+/** Effective end instant: `endsAt` or start + default duration.
+ *  Overnight listings sometimes store end earlier than start (e.g. 6pm–2am
+ *  with end on the same calendar day) — roll end forward by whole days.
+ */
 export function eventEndAt(
   startsAt: string | Date,
   endsAt?: string | Date | null,
@@ -119,9 +134,15 @@ export function eventEndAt(
 ): Date {
   const start = asDate(startsAt);
   if (endsAt) {
-    const end = asDate(endsAt);
-    if (!Number.isNaN(end.getTime()) && end.getTime() > start.getTime()) {
-      return end;
+    let end = asDate(endsAt);
+    if (!Number.isNaN(end.getTime())) {
+      // Same wall-clock overnight: end stamped before start → +1 day (repeat if needed).
+      let guard = 0;
+      while (end.getTime() <= start.getTime() && guard < 3) {
+        end = new Date(end.getTime() + MS_PER_DAY);
+        guard += 1;
+      }
+      if (end.getTime() > start.getTime()) return end;
     }
   }
   return new Date(start.getTime() + defaultDurationMs);
@@ -154,6 +175,12 @@ export function isEarlierEvent(
 ): boolean {
   const start = asDate(startsAt);
   if (Number.isNaN(start.getTime())) return false;
+  if (endsAt) {
+    const end = asDate(endsAt);
+    if (!Number.isNaN(end.getTime()) && end.getTime() - start.getTime() > MS_PER_DAY) {
+      return end.getTime() < now.getTime();
+    }
+  }
   if (start.getTime() >= now.getTime()) return false;
   return !isHappeningNow(startsAt, endsAt, now, defaultDurationMs);
 }

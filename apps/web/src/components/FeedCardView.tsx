@@ -5,13 +5,16 @@ import type { FeedCard } from "@bored/shared";
 import {
   activityTipFallbackLabel,
   eventScanTagsForDisplay,
+  FEED_TIMES_PREVIEW_LIMIT,
   foodTipFallbackLabel,
   isActivityRecommendationSource,
+  isExhibitionTag,
+  isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
-  isHappeningNow,
   isInstagramVideo,
   isNewRestaurantRecommendationSource,
+  isTimeTbaTag,
   movieGenresForDisplay,
   newRestaurantTipFallbackLabel,
   registrationStatusLabel,
@@ -39,7 +42,15 @@ export function FeedCardView({
   size?: "default" | "large" | "poster";
 }) {
   const now = useNow();
-  const live = isHappeningNow(card.startsAt, card.endsAt, now);
+  const isExhibition = isExhibitionTag(card.tags);
+  const isTimeTba = isTimeTbaTag(card.tags);
+  const tbaWhen =
+    isTimeTba
+      ? card.recommendationLabel?.trim() || "Times vary"
+      : null;
+  const live = isFeedEventLive(card.startsAt, card.endsAt, now, {
+    tags: card.tags,
+  });
   const bucketLabel = card.isSponsored
     ? "Sponsored"
     : card.bucket === "affinity"
@@ -80,8 +91,17 @@ export function FeedCardView({
     card.registrationStatus &&
     card.registrationStatus !== "open";
 
-  const hasMultipleTimes =
-    Boolean(card.showtimesPreview) && card.showtimesPreview!.length > 1;
+  const previewTimes = (card.showtimesPreview ?? []).slice(
+    0,
+    FEED_TIMES_PREVIEW_LIMIT,
+  );
+  const moreTimesCount =
+    card.showtimesMoreCount ??
+    Math.max(
+      0,
+      (card.showtimesPreview?.length ?? 0) - FEED_TIMES_PREVIEW_LIMIT,
+    );
+  const hasMultipleTimes = previewTimes.length > 1 || moreTimesCount > 0;
 
   const interactive = Boolean(onSelect);
 
@@ -123,9 +143,15 @@ export function FeedCardView({
       ? null
       : isEvergreenTip
         ? null
-        : hasMultipleTimes
-          ? formatDayOnly(card.startsAt, timeZone)
-          : formatWhen(card.startsAt, timeZone);
+        : isExhibition
+          ? card.recommendationLabel?.replace(/^Exhibition · /, "") ?? "Exhibition"
+          : isTimeTba
+            ? tbaWhen
+              ? `${formatDayOnly(card.startsAt, timeZone)} · ${tbaWhen}`
+              : formatDayOnly(card.startsAt, timeZone)
+            : hasMultipleTimes
+              ? formatDayOnly(card.startsAt, timeZone)
+              : formatWhen(card.startsAt, timeZone);
 
     return (
       <article
@@ -195,6 +221,19 @@ export function FeedCardView({
               {card.venueName ? ` · ${card.venueName}` : ""}
               {card.neighborhood ? ` · ${card.neighborhood}` : ""}
             </>
+          ) : isExhibition ? (
+            <>
+              {card.recommendationLabel ?? "Exhibition"}
+              {card.venueName ? ` · ${card.venueName}` : ""}
+              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+            </>
+          ) : isTimeTba ? (
+            <>
+              {formatDayOnly(card.startsAt, timeZone)}
+              {tbaWhen ? ` · ${tbaWhen}` : ""}
+              {card.venueName ? ` · ${card.venueName}` : ""}
+              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+            </>
           ) : isFoodDeal ? (
             <>
               {formatWhen(card.startsAt, timeZone)}
@@ -206,7 +245,7 @@ export function FeedCardView({
             </>
           ) : (
             <>
-              {hasMultipleTimes
+              {hasMultipleTimes || isTimeTba
                 ? formatDayOnly(card.startsAt, timeZone)
                 : formatWhen(card.startsAt, timeZone)}
               {card.venueName ? ` · ${card.venueName}` : ""}
@@ -252,13 +291,16 @@ export function FeedCardView({
             <FilmRatingBadges ratings={card.ratings} />
           </>
         )}
-        {card.showtimesPreview && card.showtimesPreview.length > 0 && (
+        {previewTimes.length > 0 && (
           <div className="times">
-            {card.showtimesPreview.map((s) => (
+            {previewTimes.map((s) => (
               <span key={s.startsAt} className="time">
                 {formatTime(s.startsAt, timeZone)}
               </span>
             ))}
+            {moreTimesCount > 0 ? (
+              <span className="time time--more">+{moreTimesCount} more</span>
+            ) : null}
           </div>
         )}
         <span

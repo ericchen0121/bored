@@ -1,5 +1,9 @@
 import type { FeedArea, FeedCity } from "@bored/shared";
-import { FEED_CITY_LABELS } from "@bored/shared";
+import {
+  CITY_HERO_IMAGE_META,
+  cityHeroImageUrl,
+  FEED_CITY_LABELS,
+} from "@bored/shared";
 
 export type CityHeroImage = {
   /** Unsplash CDN URL (cropped for wide hero). */
@@ -26,24 +30,37 @@ export type CityHeroStyle = {
   veil: string;
 };
 
+const OBJECT_POSITION: Record<FeedCity, string> = {
+  sf: "center 35%",
+  chicago: "center 62%",
+  la: "center 42%",
+};
+
 /**
  * Curated Unsplash city covers for feed heroes.
- * Prefer lively dusk / night shots that take color overlays well.
+ * Image meta lives in `@bored/shared` (shared with auth emails).
  */
 export const CITY_HERO_IMAGES: Record<FeedCity, CityHeroImage> = {
   sf: {
-    src: "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?auto=format&fit=crop&w=1800&h=900&q=80",
-    alt: "Golden Gate Bridge in San Francisco",
-    credit: "Anthony DELANOIX",
-    unsplashUrl: "https://unsplash.com/photos/qRWYDmKgCBY",
-    objectPosition: "center 35%",
+    src: cityHeroImageUrl("sf"),
+    alt: CITY_HERO_IMAGE_META.sf.alt,
+    credit: CITY_HERO_IMAGE_META.sf.credit,
+    unsplashUrl: CITY_HERO_IMAGE_META.sf.unsplashUrl,
+    objectPosition: OBJECT_POSITION.sf,
   },
   chicago: {
-    src: "https://images.unsplash.com/photo-1561764188-9d81dc4b6a91?auto=format&fit=crop&crop=focalpoint&fp-x=0.5&fp-y=0.62&w=1800&h=900&q=80",
-    alt: "Cloud Gate (The Bean) in Millennium Park, Chicago",
-    credit: "Joel Mott",
-    unsplashUrl: "https://unsplash.com/photos/2B5aWwADOn4",
-    objectPosition: "center 62%",
+    src: cityHeroImageUrl("chicago"),
+    alt: CITY_HERO_IMAGE_META.chicago.alt,
+    credit: CITY_HERO_IMAGE_META.chicago.credit,
+    unsplashUrl: CITY_HERO_IMAGE_META.chicago.unsplashUrl,
+    objectPosition: OBJECT_POSITION.chicago,
+  },
+  la: {
+    src: cityHeroImageUrl("la"),
+    alt: CITY_HERO_IMAGE_META.la.alt,
+    credit: CITY_HERO_IMAGE_META.la.credit,
+    unsplashUrl: CITY_HERO_IMAGE_META.la.unsplashUrl,
+    objectPosition: OBJECT_POSITION.la,
   },
 };
 
@@ -68,12 +85,23 @@ export const CITY_HERO_STYLES: Record<FeedCity, CityHeroStyle> = {
       "linear-gradient(180deg, rgba(8, 16, 40, 0.22) 0%, rgba(8, 16, 40, 0.04) 38%, rgba(6, 12, 32, 0.52) 68%, rgba(4, 8, 24, 0.92) 100%)",
     ].join(", "),
   },
+  la: {
+    palette: ["#f97316", "#f43f5e", "#fbbf24", "#38bdf8"],
+    fxMode: "party",
+    fxBlendMode: "screen",
+    veil: [
+      "linear-gradient(115deg, rgba(249, 115, 22, 0.65) 0%, rgba(244, 63, 94, 0.48) 26%, rgba(251, 191, 36, 0.35) 50%, rgba(56, 189, 248, 0.25) 72%, transparent 94%)",
+      "radial-gradient(90% 70% at 20% 75%, rgba(249, 115, 22, 0.4) 0%, transparent 55%)",
+      "linear-gradient(180deg, rgba(24, 8, 4, 0.22) 0%, rgba(24, 8, 4, 0.05) 35%, rgba(12, 4, 8, 0.5) 68%, rgba(8, 2, 12, 0.92) 100%)",
+    ].join(", "),
+  },
 };
 
 /** @deprecated Use CITY_HERO_STYLES[city].palette */
 export const CITY_HERO_PALETTES: Record<FeedCity, CityHeroPalette> = {
   sf: CITY_HERO_STYLES.sf.palette,
   chicago: CITY_HERO_STYLES.chicago.palette,
+  la: CITY_HERO_STYLES.la.palette,
 };
 
 export function cityHeroTitle(city: FeedCity, area?: FeedArea): string {
@@ -91,6 +119,9 @@ export function cityHeroLede(city: FeedCity, area?: FeedArea): string {
   }
   if (city === "chicago" || area === "chicago") {
     return "Lakefront golden hour, warehouse bass, and rooms that laugh all week.";
+  }
+  if (city === "la" || area === "la") {
+    return "Hillside sunsets, taco trucks, and rooms that run late in Hollywood.";
   }
   return "Foghorn nights, Mission dance floors, and comedy that runs late.";
 }

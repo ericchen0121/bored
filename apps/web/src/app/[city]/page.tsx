@@ -17,6 +17,7 @@ import {
   FEED_TOPICS,
   areasForCity,
   categoryLabel,
+  defaultFeedMode,
   feedFilterSourcesForCity,
   feedModeAllowsDate,
   metroFromArea,
@@ -35,7 +36,7 @@ import {
   trackFeedViewChanged,
   trackDetailOpened,
 } from "@/lib/analytics";
-import { CityHero } from "@/components/CityHero";
+import { CityHeroStatus } from "@/components/CityHeroStatus";
 import { FeedCardView } from "@/components/FeedCardView";
 import { ByTimeFeed } from "@/components/ByTimeFeed";
 import { DayStrip } from "@/components/DayStrip";
@@ -48,6 +49,7 @@ import {
   selectionFromCard,
 } from "@/components/detail/selection";
 import type { DetailSelection } from "@/components/detail/types";
+import { useUser } from "@/components/UserProvider";
 import { parseFeedDate, timeZoneForArea, dayCardLabel, dayKey } from "@/lib/datetime";
 import {
   defaultCalendarMaxDate,
@@ -70,6 +72,7 @@ import {
   readFeedView,
   rememberFeedPrefs,
   rememberFeedView,
+  topicHubHref,
 } from "@/lib/feed-prefs";
 import { useSourcesViewEnabled } from "@/lib/dev-flags";
 
@@ -84,6 +87,7 @@ const AREA_LABELS: Partial<Record<FeedArea, string>> = {
   sf: "All SF",
   bay: "All Bay Area",
   chicago: "Chicago",
+  la: "Los Angeles",
 };
 
 function toggleTopic(current: FeedTopic[], id: FeedTopic): FeedTopic[] {
@@ -141,6 +145,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     interests: string[];
     neighborhoods: string[];
     budgetMax: number | null;
+    budgetEnabled?: boolean;
+    budgetTier?: number | null;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +154,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const [prefsHydrated, setPrefsHydrated] = useState(() =>
     searchParams.has("mode"),
   );
+
+  const { ready: userReady, authenticated, onboardingComplete } = useUser();
 
   const cityAreas = areasForCity(city);
   const citySources = feedFilterSourcesForCity(city);
@@ -290,19 +298,39 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         selectionFromParams(searchParams),
         stored.topics,
       );
-    } else {
-      syncUrl(
-        mode,
-        area,
-        sources,
-        date,
-        selectionFromParams(searchParams),
-        topics,
-      );
+      setPrefsHydrated(true);
+      return;
     }
+
+    // Wait for auth so signed-in users with tastes land on For you.
+    if (!userReady) return;
+
+    const nextMode = defaultFeedMode({
+      authenticated,
+      onboardingComplete,
+    });
+    const nextDate =
+      nextMode === "today" ? dayKey(new Date(), timeZone) : null;
+    setMode(nextMode);
+    setDate(nextDate);
+    syncUrl(
+      nextMode,
+      area,
+      sources,
+      nextDate,
+      selectionFromParams(searchParams),
+      topics,
+    );
     setPrefsHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [city, searchParams, sourcesViewEnabled]);
+  }, [
+    city,
+    searchParams,
+    sourcesViewEnabled,
+    userReady,
+    authenticated,
+    onboardingComplete,
+  ]);
 
   useEffect(() => {
     setFeedView(readFeedView());
@@ -332,6 +360,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         interests: { category: string; weight: number }[];
         neighborhoods: string[];
         budgetMax: number | null;
+        budgetEnabled?: boolean;
+        budgetTier?: number | null;
       };
     }>("/v1/me")
       .then((me) => {
@@ -339,6 +369,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
           interests: me.prefs.interests.map((i) => i.category),
           neighborhoods: me.prefs.neighborhoods,
           budgetMax: me.prefs.budgetMax,
+          budgetEnabled: me.prefs.budgetEnabled,
+          budgetTier: me.prefs.budgetTier,
         });
       })
       .catch(() => {
@@ -400,6 +432,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         interests: string[];
         neighborhoods: string[];
         budgetMax: number | null;
+        budgetEnabled?: boolean;
+        budgetTier?: number | null;
       };
     }>(`/v1/feed?${params.toString()}`)
       .then((data) => {
@@ -513,20 +547,47 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   return (
     <div className={`feed-layout ${selection ? "has-detail" : ""}`}>
       <div className="feed-main">
-        <CityHero city={city} area={area}>
-          {prefsSummary && prefsSummary.interests.length > 0 && (
-            <p className="meta" style={{ marginTop: 12 }}>
-              Tastes:{" "}
-              {prefsSummary.interests
-                .slice(0, 5)
-                .map((c) => categoryLabel(c))
-                .join(" · ")}
-              {prefsSummary.interests.length > 5
-                ? ` +${prefsSummary.interests.length - 5}`
-                : ""}
-            </p>
-          )}
-        </CityHero>
+        <CityHeroStatus
+          city={city}
+          area={area}
+          timeZone={timeZone}
+          mode={mode}
+          selectedDate={mode === "weekend" || mode === "date" ? date : null}
+        >
+          {mode === "for_you" &&
+            prefsSummary &&
+            prefsSummary.interests.length > 0 && (
+              <p className="feed-tastes-line">
+                <span className="feed-tastes-line__chips">
+                  {prefsSummary.interests.slice(0, 6).map((c) => (
+                    <span key={c} className="feed-taste-chip">
+                      {categoryLabel(c)}
+                    </span>
+                  ))}
+                  {prefsSummary.interests.length > 6
+                    ? ` +${prefsSummary.interests.length - 6}`
+                    : null}
+                </span>
+                <Link href="/onboarding" className="feed-tastes-line__edit">
+                  Edit tastes
+                </Link>
+              </p>
+            )}
+          {mode === "today" &&
+            userReady &&
+            (!authenticated || !onboardingComplete) && (
+              <p className="feed-tastes-nudge">
+                {authenticated && !onboardingComplete
+                  ? "Set tastes for a feed that fits you."
+                  : "Browsing Today — "}
+                <Link href="/onboarding">
+                  {authenticated && !onboardingComplete
+                    ? "Set tastes"
+                    : "Set tastes for For you"}
+                </Link>
+              </p>
+            )}
+        </CityHeroStatus>
 
         <div className="feed-filters">
           {cityAreas.length > 1 && (
@@ -751,6 +812,19 @@ function CityFeedCity({ city }: { city: FeedCity }) {
             </div>
           </div>
         )}
+
+        <nav className="feed-topic-hubs" aria-label="Topic pages">
+          <p className="feed-topic-hubs__label">Topic pages</p>
+          <ul className="feed-topic-hubs__list">
+            {FEED_TOPICS.map((id) => (
+              <li key={id}>
+                <Link href={topicHubHref(city, id)}>
+                  {FEED_TOPIC_LABELS[id]}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </div>
 
       {selection && (

@@ -1,19 +1,26 @@
 "use client";
 
 import {
+  BUDGET_TIERS,
+  BUDGET_TIER_HINTS,
+  BUDGET_TIER_LABELS,
   INTEREST_CATEGORIES,
   INTEREST_LABELS,
-  MUSIC_GENRE_CATEGORIES,
+  MUSIC_DANCE_GENRE_CATEGORIES,
+  MUSIC_LIVE_GENRE_CATEGORIES,
   defaultAreaForCity,
   defaultNeighborhoodsForCity,
+  legacyBudgetMaxToTier,
   locationDefaultForArea,
   metroFromArea,
   neighborhoodsForCity,
+  tastesNeighborhoodHint,
+  type BudgetTier,
   type FeedCity,
 } from "@bored/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import {
   trackOnboardingCompleted,
@@ -21,9 +28,12 @@ import {
 } from "@/lib/analytics";
 import { feedHomeHref, readFeedPrefs } from "@/lib/feed-prefs";
 
-const MUSIC_GENRE_SET = new Set<string>(MUSIC_GENRE_CATEGORIES);
+const MUSIC_GENRE_SET = new Set<string>([
+  ...MUSIC_DANCE_GENRE_CATEGORIES,
+  ...MUSIC_LIVE_GENRE_CATEGORIES,
+]);
 
-/** Coarse interests shown in the main grid (genres have their own section) */
+/** Coarse interests shown in the main grid (genres have their own sections) */
 const CORE_INTERESTS = INTEREST_CATEGORIES.filter(
   (c) => !MUSIC_GENRE_SET.has(c),
 );
@@ -35,6 +45,7 @@ function resolveOnboardingCity(): FeedCity {
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const budgetHelpId = useId();
   const [city, setCity] = useState<FeedCity>("sf");
   const [selected, setSelected] = useState<string[]>([]);
   const [neighborhoods, setNeighborhoods] = useState<string[]>([]);
@@ -42,7 +53,9 @@ export default function OnboardingPage() {
   const [otherMetroNeighborhoods, setOtherMetroNeighborhoods] = useState<
     string[]
   >([]);
-  const [budgetMax, setBudgetMax] = useState(50);
+  const [budgetEnabled, setBudgetEnabled] = useState(false);
+  const [budgetTier, setBudgetTier] = useState<BudgetTier>(2);
+  const [budgetHelpOpen, setBudgetHelpOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,8 +65,6 @@ export default function OnboardingPage() {
     () => neighborhoodsForCity(city),
     [city],
   );
-
-  const cityLabel = city === "chicago" ? "Chicago" : "SF / Bay";
 
   useEffect(() => {
     trackOnboardingViewed();
@@ -69,6 +80,8 @@ export default function OnboardingPage() {
       prefs: {
         interests: { category: string; weight: number }[];
         neighborhoods: string[];
+        budgetEnabled?: boolean;
+        budgetTier?: BudgetTier | null;
         budgetMax: number | null;
       };
     }>("/v1/me")
@@ -84,7 +97,10 @@ export default function OnboardingPage() {
           me.prefs.neighborhoods.filter((n) => !hoodOptions.has(n)),
         );
         setNeighborhoods(kept.length ? kept : defaults);
-        if (me.prefs.budgetMax != null) setBudgetMax(me.prefs.budgetMax);
+        const tier =
+          me.prefs.budgetTier ?? legacyBudgetMaxToTier(me.prefs.budgetMax) ?? 2;
+        setBudgetTier(tier);
+        setBudgetEnabled(Boolean(me.prefs.budgetEnabled));
       })
       .catch(() => {
         setSelected([
@@ -107,10 +123,18 @@ export default function OnboardingPage() {
     [selected],
   );
 
-  const showMusicGenres =
+  const showDanceGenres =
     selected.includes("music.electronic") ||
     selected.includes("nightlife") ||
-    selected.some((c) => MUSIC_GENRE_SET.has(c));
+    selected.some((c) =>
+      (MUSIC_DANCE_GENRE_CATEGORIES as readonly string[]).includes(c),
+    );
+
+  const showLiveGenres =
+    selected.includes("music.live") ||
+    selected.some((c) =>
+      (MUSIC_LIVE_GENRE_CATEGORIES as readonly string[]).includes(c),
+    );
 
   function toggle(list: string[], value: string, setter: (v: string[]) => void) {
     setter(
@@ -129,7 +153,8 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           interests,
           neighborhoods: [...otherMetroNeighborhoods, ...neighborhoods],
-          budgetMax,
+          budgetEnabled,
+          budgetTier,
           preferFree: selected.includes("free"),
           nightsOut: true,
           radiusMiles: loc.radiusMiles,
@@ -141,7 +166,8 @@ export default function OnboardingPage() {
         city,
         interest_count: interests.length,
         neighborhood_count: neighborhoods.length,
-        budget_max: budgetMax,
+        budget_enabled: budgetEnabled,
+        budget_tier: budgetTier,
       });
       setSavedOk(true);
       router.push(feedHomeHref("for_you"));
@@ -199,17 +225,41 @@ export default function OnboardingPage() {
         </div>
       </div>
 
-      {showMusicGenres && (
+      {showDanceGenres && (
         <div className="panel">
           <h2 className="section-title" style={{ marginTop: 0 }}>
-            Music genres
+            Dance / electronic
           </h2>
           <p className="muted" style={{ marginTop: -4, marginBottom: 12 }}>
-            From 19hz and similar listings — boosts house, techno, and friends
-            in your feed.
+            From 19hz, RA, and similar — boosts house, techno, and friends in
+            your feed.
           </p>
           <div className="grid-pills">
-            {MUSIC_GENRE_CATEGORIES.map((cat) => (
+            {MUSIC_DANCE_GENRE_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`pill ${selected.includes(cat) ? "on" : ""}`}
+                onClick={() => toggle(selected, cat, setSelected)}
+              >
+                {INTEREST_LABELS[cat]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showLiveGenres && (
+        <div className="panel">
+          <h2 className="section-title" style={{ marginTop: 0 }}>
+            Live music styles
+          </h2>
+          <p className="muted" style={{ marginTop: -4, marginBottom: 12 }}>
+            Boosts Ticketmaster and other concerts in these lanes — beyond
+            generic “Live music”.
+          </p>
+          <div className="grid-pills">
+            {MUSIC_LIVE_GENRE_CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 type="button"
@@ -228,7 +278,7 @@ export default function OnboardingPage() {
           Neighborhoods
         </h2>
         <p className="muted" style={{ marginTop: -4, marginBottom: 12 }}>
-          {cityLabel} — switch city on the feed to edit the other metro.
+          {tastesNeighborhoodHint(city)}
         </p>
         <div className="grid-pills">
           {neighborhoodOptions.map((n) => (
@@ -245,22 +295,96 @@ export default function OnboardingPage() {
       </div>
 
       <div className="panel">
-        <div className="field">
-          <label htmlFor="budget">Budget ceiling ($)</label>
-          <input
-            id="budget"
-            type="number"
-            value={budgetMax}
-            onChange={(e) => setBudgetMax(Number(e.target.value))}
-          />
+        <div className="budget-prefs">
+          <div className="budget-prefs__header">
+            <h2
+              className="section-title"
+              style={{ marginTop: 0, marginBottom: 0 }}
+            >
+              Budget
+            </h2>
+            <button
+              type="button"
+              className="budget-prefs__info"
+              aria-expanded={budgetHelpOpen}
+              aria-controls={budgetHelpId}
+              onClick={() => setBudgetHelpOpen((v) => !v)}
+            >
+              <span aria-hidden>i</span>
+              <span className="sr-only">How budget affects the feed</span>
+            </button>
+          </div>
+
+          {budgetHelpOpen && (
+            <p id={budgetHelpId} className="budget-prefs__help muted">
+              When filter is on, For you and Weekend hide listings priced above
+              your band ($–$$$$). Today and Select Date still show everything.
+              Unknown prices and free events always stay. Off = no price
+              filtering.
+            </p>
+          )}
+
+          <div className="budget-prefs__toggle-row">
+            <button
+              type="button"
+              className={`budget-switch${budgetEnabled ? " is-on" : ""}`}
+              role="switch"
+              aria-checked={budgetEnabled}
+              onClick={() => setBudgetEnabled((v) => !v)}
+            >
+              <span className="budget-switch__track" aria-hidden>
+                <span className="budget-switch__thumb" />
+              </span>
+              <span className="budget-switch__label">
+                {budgetEnabled ? "Filter by budget" : "Budget filter off"}
+              </span>
+            </button>
+          </div>
+
+          <div
+            className={`budget-prefs__tiers${budgetEnabled ? "" : " is-disabled"}`}
+            aria-disabled={!budgetEnabled}
+          >
+            <p className="muted budget-prefs__tier-hint">
+              {budgetEnabled
+                ? BUDGET_TIER_HINTS[budgetTier]
+                : "Turn on to hide pricier picks in For you"}
+            </p>
+            <div
+              className="grid-pills"
+              role="radiogroup"
+              aria-label="Budget band"
+            >
+              {BUDGET_TIERS.map((tier) => (
+                <button
+                  key={tier}
+                  type="button"
+                  role="radio"
+                  aria-checked={budgetTier === tier}
+                  className={`pill ${budgetTier === tier ? "on" : ""}`}
+                  disabled={!budgetEnabled}
+                  onClick={() => setBudgetTier(tier)}
+                >
+                  {BUDGET_TIER_LABELS[tier]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
+
         {error && (
-          <p className="muted" style={{ color: "var(--coral)", marginBottom: 12 }}>
+          <p
+            className="muted"
+            style={{ color: "var(--coral)", marginBottom: 12 }}
+          >
             {error}
           </p>
         )}
         {savedOk && (
-          <p className="muted" style={{ color: "var(--ok)", marginBottom: 12 }}>
+          <p
+            className="muted"
+            style={{ color: "var(--ok)", marginBottom: 12 }}
+          >
             Saved — loading your feed…
           </p>
         )}

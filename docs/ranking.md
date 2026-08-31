@@ -35,6 +35,7 @@ Adjacent map examples:
 
 - `music.electronic` ↔ `music.live`, `nightlife`, and dance genres (`music.house`, `music.techno`, …)
 - Dance genres ↔ each other + `music.electronic` / `nightlife` (from 19hz-style tags)
+- Live styles (`music.rock`, `music.indie`, `music.jazz`, `music.hip_hop`, `music.blues`, …) ↔ `music.live` (Ticketmaster genre tags map here)
 - `comedy.club` ↔ `comedy.showcase`, `comedy.underground`
 - `movies.arthouse` ↔ `movies`, `arts`
 
@@ -46,9 +47,26 @@ Adjacent map examples:
 | `dismissed` | Hard exclude |
 | Neighborhood match | Small boost |
 | Distance within radius | Soft score |
-| `preferFree` / `budgetMax` | Hard filter (not in `all` mode) |
+| `preferFree` / `budgetEnabled` + `budgetTier` ($–$$$$) | Hard filter when enabled (not in Today / Select Date / topic browse) |
 | Film IMDb (when present) | Small rating boost |
+| Exhibition (`tags` / `rawPayload.exhibition`) | Mild score penalty; no live boost; midday sort slot on day browse |
 | **Sponsored** (`isSponsored`) | Separated from organic ranking, then **injected** at capped intervals (see below) |
+| **Demotion rules** | Score × multiplier + optional max cards per venue (see below) |
+
+## Feed demotion rules
+
+Ops-managed rows in `feed_demotion_rules` (Admin → **Demotions**). Matching listings stay in the feed but rank lower and/or are capped per venue.
+
+| Field | Match |
+|---|---|
+| `metro` | Feed area / city via taxonomy `eventInArea` (self-corrects when metros are added); null = all |
+| `source` | Exact ingest source id |
+| `venueContains` | Case-insensitive substring on `venueName` **or** title (Funcheap often omits venue) |
+| `categoryContains` | Case-insensitive substring on any category id |
+| `scoreMultiplier` | Multiplies organic score (0–1); used in `for_you` / `weekend` |
+| `maxPerVenue` | Max cards from that venue in one response (all modes); null = uncapped |
+
+Multiple matching rules multiply scores and take the strictest venue cap. Seed includes **The Function** (Funcheap comedy venue). Logic: `packages/shared/src/feedDemotion.ts`.
 
 ## Sponsored injection
 
@@ -69,7 +87,8 @@ Stored on `user_profiles`:
 
 - `interests[]` — `{ category, weight 0–1 }`
 - `neighborhoods[]`
-- `budgetMax`, `preferFree`, `nightsOut`
+- `budgetEnabled`, `budgetTier` (1–4 = $–$$$$); legacy `budgetMax` USD still accepted on write
+- `preferFree`, `nightsOut`
 - `lat` / `lng` / `radiusMiles`
 
 After onboarding save, clients should load `/?mode=for_you` so ranking uses the new profile.

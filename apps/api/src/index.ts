@@ -1,12 +1,15 @@
 import { serve } from "@hono/node-server";
-import { db, events, films, outboundClicks, signals, showtimes, theaters, userProfiles, users } from "@bored/db";
+import { db, events, feedDemotionRules, films, outboundClicks, signals, showtimes, theaters, userProfiles, users } from "@bored/db";
 import {
   FeedQuerySchema,
   INTEREST_CATEGORIES,
   CHI_NEIGHBORHOODS,
+  LA_NEIGHBORHOODS,
   NEIGHBORHOODS,
   SF_DEFAULT,
   CHI_DEFAULT,
+  LA_DEFAULT,
+  MagicLinkRequestSchema,
   SignalInputSchema,
   UserPrefsSchema,
   affiliateConfigFromEnv,
@@ -19,17 +22,27 @@ import {
   enrichCategoriesWithTags,
   eventInArea,
   eventTimesPreview,
+  FEED_TIMES_PREVIEW_LIMIT,
+  exhibitionScheduleFromPayload,
+  exhibitionWhenLabel,
   expandSourceFilter,
   extractMusicPlatformRef,
   expandFoodDealRowsForFeed,
+  expandExhibitionRowsForFeed,
   expandRecurringRowsForFeed,
   filterCuratedFeedRows,
   foodDealScheduleFromPayload,
+  formatDailyHoursLabel,
+  dailyHoursFromPayload,
+  isTimeTbaTag,
   isMusicTicketPlatform,
   locationDefaultForArea,
+  legacyBudgetMaxToTier,
   mergePlatformWithNineteenHz,
   metroFromArea,
   MUSIC_TICKET_PLATFORMS,
+  normalizeBudgetPrefs,
+  parseBudgetTier,
   parseEventSources,
   parseFeedDate,
   foodRecommendationLabel,
@@ -62,11 +75,23 @@ import {
 
 import { coalesceEventOccurrences } from "@bored/shared/coalesce";
 import { config } from "dotenv";
-import { and, asc, eq, gte, inArray, lt, lte, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { resolve } from "node:path";
 import { adminApp } from "./admin.js";
+import {
+  requestMagicLink,
+  resolveAuthenticatedUserId,
+  resolveUserId as resolveRequestUserId,
+  revokeSession,
+  verifyMagicLink,
+} from "./auth.js";
+import {
+  getTodayFeedCache,
+  setTodayFeedCache,
+  todayFeedCacheKey,
+} from "./feedCache.js";
 import { resolveGeo } from "./geo.js";
 
 config({ path: resolve(process.cwd(), "../../.env") });
@@ -100,10 +125,14 @@ app.use(
 
 app.route("/v1/admin", adminApp);
 
-function userId(c: { req: { header: (n: string) => string | undefined } }) {
-  const raw = c.req.header("X-User-Id")?.trim();
-  if (raw && UUID_RE.test(raw)) return raw;
-  return UUID_RE.test(DEMO_USER_ID) ? DEMO_USER_ID : DEFAULT_DEMO_USER_ID;
+async function userId(c: {
+  req: { header: (n: string) => string | undefined };
+}): Promise<string> {
+  return resolveRequestUserId(
+    c.req.header("Authorization"),
+    c.req.header("X-User-Id"),
+    DEMO_USER_ID,
+  );
 }
 
 /** Curated tips — fetch fully when source-filtered (not capped by timed window). */
@@ -136,6 +165,7 @@ function presentEvent<
     venueName?: string | null;
     address?: string | null;
     city?: string | null;
+    neighborhood?: string | null;
   },
 >(row: T): T {
   const withImage =
@@ -149,6 +179,7 @@ function presentEvent<
     title: withImage.title,
     address: withImage.address,
     city: withImage.city,
+    neighborhood: withImage.neighborhood,
   });
   const withGeo =
     coords.lat != null && coords.lng != null
@@ -229,6 +260,8 @@ async function getPrefs(uid: string): Promise<UserPrefs> {
     return {
       interests: [],
       neighborhoods: [],
+      budgetEnabled: false,
+      budgetTier: null,
       budgetMax: null,
       preferFree: false,
       nightsOut: true,
@@ -238,10 +271,16 @@ async function getPrefs(uid: string): Promise<UserPrefs> {
     };
   }
 
+  const budgetTier =
+    parseBudgetTier(profile.budgetTier) ??
+    legacyBudgetMaxToTier(profile.budgetMax);
+
   return {
     interests: (profile.interests ?? []) as UserPrefs["interests"],
     neighborhoods: profile.neighborhoods ?? [],
-    budgetMax: profile.budgetMax,
+    budgetEnabled: Boolean(profile.budgetEnabled),
+    budgetTier,
+    budgetMax: profile.budgetMax ?? null,
     preferFree: profile.preferFree ?? false,
     nightsOut: profile.nightsOut ?? true,
     radiusMiles: profile.radiusMiles ?? SF_DEFAULT.radiusMiles,
@@ -260,9 +299,10 @@ app.get("/v1/meta/taxonomy", (c) =>
     neighborhoodsByCity: {
       sf: NEIGHBORHOODS,
       chicago: CHI_NEIGHBORHOODS,
+      la: LA_NEIGHBORHOODS,
     },
     defaultLocation: SF_DEFAULT,
-    locations: { sf: SF_DEFAULT, chicago: CHI_DEFAULT },
+    locations: { sf: SF_DEFAULT, chicago: CHI_DEFAULT, la: LA_DEFAULT },
   }),
 );
 
@@ -270,7 +310,10 @@ app.get("/v1/meta/taxonomy", (c) =>
 app.get("/v1/geo", async (c) => c.json(await resolveGeo(c)));
 
 app.get("/v1/me", async (c) => {
-  const uid = userId(c);
+  const uid = await userId(c);
+  const authedUserId = await resolveAuthenticatedUserId(
+    c.req.header("Authorization"),
+  );
   const [user] = await db.select().from(users).where(eq(users.id, uid)).limit(1);
   const prefs = await getPrefs(uid);
   const [profile] = await db
@@ -282,11 +325,65 @@ app.get("/v1/me", async (c) => {
     user: user ?? { id: uid, email: null, displayName: "Guest" },
     prefs,
     onboardingComplete: profile?.onboardingComplete ?? false,
+    authenticated: Boolean(authedUserId && user?.email),
   });
 });
 
+app.post("/v1/auth/magic-link", async (c) => {
+  let body: ReturnType<typeof MagicLinkRequestSchema.parse>;
+  try {
+    body = MagicLinkRequestSchema.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: "Invalid request", detail: String(err) }, 400);
+  }
+
+  const anonymousUserId = c.req.header("X-User-Id")?.trim();
+  try {
+    await requestMagicLink({
+      email: body.email,
+      returnTo: body.returnTo,
+      city: body.city,
+      anonymousUserId:
+        anonymousUserId && UUID_RE.test(anonymousUserId)
+          ? anonymousUserId
+          : undefined,
+    });
+  } catch (err) {
+    console.error("[auth] magic-link failed:", err);
+    return c.json({ error: "Could not send sign-in link" }, 500);
+  }
+
+  return c.json({ ok: true });
+});
+
+app.get("/v1/auth/verify", async (c) => {
+  const token = c.req.query("token")?.trim();
+  if (!token) {
+    return c.json({ error: "Missing token" }, 400);
+  }
+
+  const anonymousUserId = c.req.header("X-User-Id")?.trim();
+  try {
+    const result = await verifyMagicLink({
+      token,
+      anonymousUserId:
+        anonymousUserId && UUID_RE.test(anonymousUserId)
+          ? anonymousUserId
+          : undefined,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: String(err) }, 400);
+  }
+});
+
+app.post("/v1/auth/logout", async (c) => {
+  await revokeSession(c.req.header("Authorization"));
+  return c.json({ ok: true });
+});
+
 app.put("/v1/me/interests", async (c) => {
-  const uid = userId(c);
+  const uid = await userId(c);
   let body: ReturnType<typeof UserPrefsSchema.parse>;
   try {
     body = UserPrefsSchema.parse(await c.req.json());
@@ -299,13 +396,17 @@ app.put("/v1/me/interests", async (c) => {
     .values({ id: uid, displayName: "You" })
     .onConflictDoNothing();
 
+  const budget = normalizeBudgetPrefs(body);
+
   await db
     .insert(userProfiles)
     .values({
       userId: uid,
       interests: body.interests,
       neighborhoods: body.neighborhoods,
-      budgetMax: body.budgetMax,
+      budgetMax: budget.budgetMax,
+      budgetTier: budget.budgetTier,
+      budgetEnabled: budget.budgetEnabled,
       preferFree: body.preferFree ?? false,
       nightsOut: body.nightsOut ?? true,
       radiusMiles: body.radiusMiles ?? SF_DEFAULT.radiusMiles,
@@ -319,7 +420,9 @@ app.put("/v1/me/interests", async (c) => {
       set: {
         interests: body.interests,
         neighborhoods: body.neighborhoods,
-        budgetMax: body.budgetMax,
+        budgetMax: budget.budgetMax,
+        budgetTier: budget.budgetTier,
+        budgetEnabled: budget.budgetEnabled,
         preferFree: body.preferFree ?? false,
         nightsOut: body.nightsOut ?? true,
         radiusMiles: body.radiusMiles ?? SF_DEFAULT.radiusMiles,
@@ -330,11 +433,15 @@ app.put("/v1/me/interests", async (c) => {
       },
     });
 
-  return c.json({ ok: true, prefs: body, onboardingComplete: true });
+  return c.json({
+    ok: true,
+    prefs: { ...body, ...budget },
+    onboardingComplete: true,
+  });
 });
 
 app.post("/v1/me/signals", async (c) => {
-  const uid = userId(c);
+  const uid = await userId(c);
   const body = SignalInputSchema.parse(await c.req.json());
   await db.insert(users).values({ id: uid }).onConflictDoNothing();
   const [row] = await db
@@ -345,8 +452,39 @@ app.post("/v1/me/signals", async (c) => {
       targetId: body.targetId,
       type: body.type,
     })
+    .onConflictDoNothing()
     .returning();
-  return c.json(row);
+  if (row) return c.json(row);
+
+  const [existing] = await db
+    .select()
+    .from(signals)
+    .where(
+      and(
+        eq(signals.userId, uid),
+        eq(signals.targetKind, body.targetKind),
+        eq(signals.targetId, body.targetId),
+        eq(signals.type, body.type),
+      ),
+    )
+    .limit(1);
+  return c.json(existing ?? { ok: true });
+});
+
+app.delete("/v1/me/signals", async (c) => {
+  const uid = await userId(c);
+  const body = SignalInputSchema.parse(await c.req.json());
+  await db
+    .delete(signals)
+    .where(
+      and(
+        eq(signals.userId, uid),
+        eq(signals.targetKind, body.targetKind),
+        eq(signals.targetId, body.targetId),
+        eq(signals.type, body.type),
+      ),
+    );
+  return c.json({ ok: true });
 });
 
 app.get("/v1/events", async (c) => {
@@ -370,6 +508,67 @@ app.get("/v1/events", async (c) => {
   }
 
   return c.json({ events: rows.slice(0, limit) });
+});
+
+/** Public crawl hints for web sitemap (upcoming events + films with showtimes). */
+app.get("/v1/seo/sitemap", async (c) => {
+  const now = new Date();
+  const windowEnd = new Date(now.getTime() + 90 * 86400000);
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 5000), 1), 5000);
+
+  const eventRows = await db
+    .select({
+      id: events.id,
+      lastModified: events.lastSeenAt,
+      startsAt: events.startsAt,
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.hidden, false),
+        eq(events.kind, "event"),
+        gte(events.startsAt, now),
+        lte(events.startsAt, windowEnd),
+      ),
+    )
+    .orderBy(asc(events.startsAt))
+    .limit(limit);
+
+  const filmShowRows = await db
+    .select({
+      id: films.id,
+      lastModified: films.lastEnrichedAt,
+    })
+    .from(showtimes)
+    .innerJoin(films, eq(showtimes.filmId, films.id))
+    .where(
+      and(
+        gte(showtimes.startsAt, now),
+        lte(showtimes.startsAt, windowEnd),
+      ),
+    )
+    .orderBy(asc(showtimes.startsAt))
+    .limit(2000);
+
+  const seenFilms = new Set<string>();
+  const filmEntries: { id: string; lastModified: string }[] = [];
+  for (const row of filmShowRows) {
+    if (seenFilms.has(row.id)) continue;
+    seenFilms.add(row.id);
+    filmEntries.push({
+      id: row.id,
+      lastModified: (row.lastModified ?? now).toISOString(),
+    });
+    if (filmEntries.length >= 500) break;
+  }
+
+  return c.json({
+    events: eventRows.map((r) => ({
+      id: r.id,
+      lastModified: (r.lastModified ?? r.startsAt).toISOString(),
+    })),
+    films: filmEntries,
+  });
 });
 
 app.get("/v1/events/:id", async (c) => {
@@ -675,11 +874,11 @@ app.get("/v1/movies/showtimes", async (c) => {
 
 app.get("/v1/feed", async (c) => {
   try {
-  const uid = userId(c);
+  const uid = await userId(c);
   const rawDate = parseFeedDate(c.req.query("date"));
   const hasSourcesQuery = Boolean(c.req.query("sources")?.trim());
   const query = FeedQuerySchema.parse({
-    mode: c.req.query("mode") ?? "for_you",
+    mode: c.req.query("mode") ?? "today",
     area: c.req.query("area") ?? "bay",
     lat: c.req.query("lat"),
     lng: c.req.query("lng"),
@@ -700,6 +899,28 @@ app.get("/v1/feed", async (c) => {
         : 40),
   });
 
+  // Shared Today feeds are cacheable; authenticated users skip (dismiss/save).
+  const authedUserId = await resolveAuthenticatedUserId(
+    c.req.header("Authorization"),
+  );
+  const todayCacheKey =
+    query.mode === "today" && !authedUserId
+      ? todayFeedCacheKey({
+          area: query.area,
+          date: query.date ?? null,
+          topics: query.topics ?? "",
+          sources: query.sources ?? "",
+          limit: query.limit,
+        })
+      : null;
+  if (todayCacheKey) {
+    const cached = getTodayFeedCache(todayCacheKey);
+    if (cached) {
+      c.header("X-Feed-Cache", "hit");
+      return c.json(cached);
+    }
+  }
+
   const prefs = await getPrefs(uid);
   const locDefault = locationDefaultForArea(query.area);
   // When browsing another metro, center ranking on that metro unless the client
@@ -714,6 +935,9 @@ app.get("/v1/feed", async (c) => {
     prefs.radiusMiles = 35;
   }
   if (query.area === "chicago" && (prefs.radiusMiles ?? 15) < 25) {
+    prefs.radiusMiles = 25;
+  }
+  if (query.area === "la" && (prefs.radiusMiles ?? 15) < 25) {
     prefs.radiusMiles = 25;
   }
 
@@ -758,6 +982,15 @@ app.get("/v1/feed", async (c) => {
   const startsInWindow = exclusiveEnd
     ? and(gte(events.startsAt, windowStart), lt(events.startsAt, windowEnd))
     : and(gte(events.startsAt, windowStart), lte(events.startsAt, windowEnd));
+  /** Long runs (exhibitions): include when the window overlaps [startsAt, endsAt]. */
+  const timedInWindow = or(
+    startsInWindow,
+    and(
+      isNotNull(events.endsAt),
+      lt(events.startsAt, windowEnd),
+      gte(events.endsAt, windowStart),
+    ),
+  );
 
   const curatedSourceSet = new Set<string>();
   if (sourceFilter) {
@@ -807,7 +1040,7 @@ app.get("/v1/feed", async (c) => {
       .from(events)
       .where(
         and(
-          startsInWindow,
+          timedInWindow,
           eq(events.hidden, false),
           notInArray(events.source, [...CURATED_ONLY_TIMED_SOURCES]),
           // Evergreen tips use kind=recommendation (also excluded by source).
@@ -849,11 +1082,18 @@ app.get("/v1/feed", async (c) => {
     !sourceFilter ||
     MUSIC_TICKET_PLATFORMS.some((platform) => sourceFilter.has(platform));
   const coalescedRows = expandRecurringRowsForFeed(
-    expandFoodDealRowsForFeed(
-      coalesceEventOccurrences(
-        wantsPlatformTwin
-          ? coalesceMusicPlatformNineteenHz(eventRows)
-          : eventRows,
+    expandExhibitionRowsForFeed(
+      expandFoodDealRowsForFeed(
+        coalesceEventOccurrences(
+          wantsPlatformTwin
+            ? coalesceMusicPlatformNineteenHz(eventRows)
+            : eventRows,
+        ),
+        {
+          mode: query.mode,
+          windowStart,
+          windowEnd,
+        },
       ),
       {
         mode: query.mode,
@@ -952,7 +1192,15 @@ app.get("/v1/feed", async (c) => {
         e.source === "food"
           ? stripInfatuationRatingTitle(e.title, infatuationRating)
           : e.title;
-      const recommendationLabel = isFoodDeal
+      const exhibitionSchedule = exhibitionScheduleFromPayload(payload);
+      const tbaHours = isTimeTbaTag(tags)
+        ? dailyHoursFromPayload(payload)
+        : null;
+      const recommendationLabel = exhibitionSchedule
+        ? `Exhibition · ${exhibitionWhenLabel(exhibitionSchedule, locDefault.timezone)}`
+        : tbaHours
+          ? formatDailyHoursLabel(tbaHours)
+        : isFoodDeal
         ? foodDealRecommendationLabel({
             dealKind:
               payload?.dealKind === "lunch" ? "lunch" : "happy_hour",
@@ -995,6 +1243,7 @@ app.get("/v1/feed", async (c) => {
         address: e.address,
         city: e.city,
       });
+      const timesPreview = eventTimesPreview(e, e.venueName);
 
       return {
         id: e.id,
@@ -1036,7 +1285,9 @@ app.get("/v1/feed", async (c) => {
                   ? 0.88
                   : 0.85,
         recommendationLabel,
-        showtimesPreview: eventTimesPreview(e, e.venueName),
+        rawPayload: payload,
+        showtimesPreview: timesPreview?.times,
+        showtimesMoreCount: timesPreview?.moreCount || undefined,
         ratings:
           infatuationRating != null
             ? { infatuation: infatuationRating }
@@ -1134,11 +1385,15 @@ app.get("/v1/feed", async (c) => {
         city: "sf",
         source: first.showtime.source,
         ratings: film.ratings as Rankable["ratings"],
-        showtimesPreview: shows.slice(0, 3).map((s) => ({
+        showtimesPreview: shows.slice(0, FEED_TIMES_PREVIEW_LIMIT).map((s) => ({
           startsAt: s.showtime.startsAt.toISOString(),
           theaterName: s.theater.name,
           ticketUrl: s.showtime.ticketUrl,
         })),
+        showtimesMoreCount:
+          shows.length > FEED_TIMES_PREVIEW_LIMIT
+            ? shows.length - FEED_TIMES_PREVIEW_LIMIT
+            : undefined,
         sourceTrust: 0.9,
       });
     }
@@ -1164,6 +1419,22 @@ app.get("/v1/feed", async (c) => {
       .map((s) => (s.targetKind === "film" ? `film:${s.targetId}` : s.targetId)),
   );
 
+  const demotionRows = await db
+    .select()
+    .from(feedDemotionRules)
+    .where(eq(feedDemotionRules.active, true));
+  const demotionRules = demotionRows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    metro: r.metro,
+    source: r.source,
+    venueContains: r.venueContains,
+    categoryContains: r.categoryContains,
+    scoreMultiplier: r.scoreMultiplier,
+    maxPerVenue: r.maxPerVenue,
+    active: r.active,
+  }));
+
   // Chronological listing when browsing a source, Select Date, or a calendar
   // day (including Today) so preferFree / budget / affinity slots don't hide
   // most of that source.
@@ -1186,6 +1457,7 @@ app.get("/v1/feed", async (c) => {
     dismissedIds,
     savedBoostIds,
     showAll: chronological,
+    demotionRules,
   };
 
   const organicCards = topicForYou
@@ -1227,7 +1499,7 @@ app.get("/v1/feed", async (c) => {
     maxShare: 0.12,
   }).slice(0, query.limit);
 
-  return c.json({
+  const body = {
     mode: query.mode,
     area: query.area,
     date: dayDate,
@@ -1235,10 +1507,17 @@ app.get("/v1/feed", async (c) => {
     prefsSummary: {
       interests: prefs.interests.map((i) => i.category),
       neighborhoods: prefs.neighborhoods,
-      budgetMax: prefs.budgetMax,
+      budgetEnabled: prefs.budgetEnabled ?? false,
+      budgetTier: prefs.budgetTier ?? null,
+      budgetMax: prefs.budgetMax ?? null,
     },
     cards,
-  });
+  };
+  if (todayCacheKey) {
+    setTodayFeedCache(todayCacheKey, body);
+    c.header("X-Feed-Cache", "miss");
+  }
+  return c.json(body);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[feed]", message);
@@ -1247,14 +1526,169 @@ app.get("/v1/feed", async (c) => {
 });
 
 app.get("/v1/me/saved", async (c) => {
-  const uid = userId(c);
+  const uid = await userId(c);
   const saved = await db
     .select()
     .from(signals)
     .where(and(eq(signals.userId, uid), inArray(signals.type, ["saved", "going"])))
     .orderBy(sql`${signals.createdAt} desc`)
     .limit(100);
-  return c.json({ signals: saved });
+
+  const eventIds = saved
+    .filter((s) => s.targetKind === "event")
+    .map((s) => s.targetId);
+  const filmIds = saved
+    .filter((s) => s.targetKind === "film")
+    .map((s) => s.targetId);
+
+  const eventRows =
+    eventIds.length > 0
+      ? await db
+          .select()
+          .from(events)
+          .where(and(inArray(events.id, eventIds), eq(events.hidden, false)))
+      : [];
+  const filmRows =
+    filmIds.length > 0
+      ? await db.select().from(films).where(inArray(films.id, filmIds))
+      : [];
+
+  const nextShowByFilm = new Map<
+    string,
+    { startsAt: Date; theaterName: string | null }
+  >();
+  if (filmIds.length > 0) {
+    const now = new Date();
+    const showRows = await db
+      .select({
+        filmId: showtimes.filmId,
+        startsAt: showtimes.startsAt,
+        theaterName: theaters.name,
+      })
+      .from(showtimes)
+      .innerJoin(theaters, eq(showtimes.theaterId, theaters.id))
+      .where(
+        and(inArray(showtimes.filmId, filmIds), gte(showtimes.startsAt, now)),
+      )
+      .orderBy(asc(showtimes.startsAt))
+      .limit(500);
+    for (const row of showRows) {
+      if (!nextShowByFilm.has(row.filmId)) {
+        nextShowByFilm.set(row.filmId, {
+          startsAt: row.startsAt,
+          theaterName: row.theaterName,
+        });
+      }
+    }
+  }
+
+  const eventById = new Map(eventRows.map((e) => [e.id, e]));
+  const filmById = new Map(filmRows.map((f) => [f.id, f]));
+  const now = new Date();
+
+  type SavedCard = {
+    signalId: string;
+    signalType: string;
+    savedAt: string;
+    past: boolean;
+    kind: "event" | "movie_showtime";
+    id: string;
+    title: string;
+    subtitle: string | null;
+    startsAt: string;
+    endsAt: string | null;
+    imageUrl: string | null;
+    venueName: string | null;
+    neighborhood: string | null;
+    categories: string[];
+    tags: string[];
+    source: string | null;
+    registrationStatus: string | null;
+    isFree: boolean;
+    url: string | null;
+    score: number;
+    bucket: "affinity" | "adjacent" | "serendipity";
+    filmId?: string;
+    ratings?: unknown;
+  };
+
+  const items: SavedCard[] = [];
+  for (const s of saved) {
+    if (s.targetKind === "event") {
+      const row = eventById.get(s.targetId);
+      if (!row) continue;
+      const presented = presentEvent(row);
+      const past =
+        presented.endsAt != null
+          ? presented.endsAt.getTime() < now.getTime()
+          : presented.startsAt.getTime() < now.getTime() - 3 * 3600_000;
+      items.push({
+        signalId: s.id,
+        signalType: s.type,
+        savedAt: s.createdAt.toISOString(),
+        past,
+        kind: "event",
+        id: presented.id,
+        title: presented.title,
+        subtitle: presented.venueName,
+        startsAt: presented.startsAt.toISOString(),
+        endsAt: presented.endsAt?.toISOString() ?? null,
+        imageUrl: presented.imageUrl,
+        venueName: presented.venueName,
+        neighborhood: presented.neighborhood,
+        categories: (presented.categories as string[]) ?? [],
+        tags: (presented.tags as string[]) ?? [],
+        source: presented.source,
+        registrationStatus: presented.registrationStatus ?? null,
+        isFree: presented.isFree,
+        url: presented.url,
+        score: 1,
+        bucket: "affinity",
+      });
+      continue;
+    }
+    if (s.targetKind === "film") {
+      const film = filmById.get(s.targetId);
+      if (!film) continue;
+      const next = nextShowByFilm.get(film.id);
+      const startsAt = next?.startsAt ?? now;
+      const past = !next;
+      items.push({
+        signalId: s.id,
+        signalType: s.type,
+        savedAt: s.createdAt.toISOString(),
+        past,
+        kind: "movie_showtime",
+        id: `film:${film.id}`,
+        filmId: film.id,
+        title: film.title,
+        subtitle: next?.theaterName ?? (film.year ? String(film.year) : null),
+        startsAt: startsAt.toISOString(),
+        endsAt: null,
+        imageUrl: film.posterUrl,
+        venueName: next?.theaterName ?? null,
+        neighborhood: null,
+        categories: ["movies"],
+        tags: (film.genres as string[]) ?? [],
+        source: "tms",
+        registrationStatus: null,
+        isFree: false,
+        url: film.letterboxdUrl,
+        score: 1,
+        bucket: "affinity",
+        ratings: film.ratings,
+      });
+    }
+  }
+
+  const upcoming = items
+    .filter((i) => !i.past)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const past = items
+    .filter((i) => i.past)
+    .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+
+  return c.json({ signals: saved, upcoming, past, cards: upcoming });
 });
 
 const affiliateConfig = affiliateConfigFromEnv();
