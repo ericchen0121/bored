@@ -19,6 +19,7 @@ import {
   readFeedPrefs,
   rememberFeedPrefs,
 } from "@/lib/feed-prefs";
+import { isSourcesViewEnabled } from "@/lib/dev-flags";
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -60,10 +61,11 @@ export function SiteHeader() {
     });
     const mode = prefs?.mode ?? "for_you";
     const topics = prefs?.topics ?? [];
+    const sources = isSourcesViewEnabled() ? (prefs?.sources ?? []) : [];
     const date =
       prefs && feedModeAllowsDate(prefs.mode) ? (prefs.date ?? null) : null;
-    rememberFeedPrefs(mode, nextArea, [], date, topics);
-    router.push(feedHomeHref(mode, nextArea, [], date, topics));
+    rememberFeedPrefs(mode, nextArea, sources, date, topics);
+    router.push(feedHomeHref(mode, nextArea, sources, date, topics));
   }
 
   function switchCity(nextCity: FeedCity) {

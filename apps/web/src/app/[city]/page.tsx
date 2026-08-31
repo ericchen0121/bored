@@ -30,6 +30,7 @@ import {
   trackFeedDateChanged,
   trackFeedLoaded,
   trackFeedModeChanged,
+  trackFeedSourcesChanged,
   trackFeedTopicChanged,
   trackFeedViewChanged,
   trackDetailOpened,
@@ -40,6 +41,7 @@ import { ByTimeFeed } from "@/components/ByTimeFeed";
 import { DayStrip } from "@/components/DayStrip";
 import { MoviesSection } from "@/components/MoviesSection";
 import { FeedViewToggle } from "@/components/FeedViewToggle";
+import { SourceFilterMenu } from "@/components/SourceFilterMenu";
 import { DetailDrawer } from "@/components/detail/DetailDrawer";
 import {
   cardMatchesSelection,
@@ -69,6 +71,7 @@ import {
   rememberFeedPrefs,
   rememberFeedView,
 } from "@/lib/feed-prefs";
+import { useSourcesViewEnabled } from "@/lib/dev-flags";
 
 const MODE_LABELS: Record<FeedMode, string> = {
   for_you: "For you",
@@ -147,6 +150,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   );
 
   const cityAreas = areasForCity(city);
+  const citySources = feedFilterSourcesForCity(city);
+  const sourcesViewEnabled = useSourcesViewEnabled();
   const timeZone = timeZoneForArea(area);
 
   const selection = useMemo(
@@ -173,7 +178,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       rememberFeedPrefs(
         nextMode,
         nextArea,
-        [],
+        nextSources,
         resolvedDate,
         nextTopics,
       );
@@ -272,13 +277,15 @@ function CityFeedCity({ city }: { city: FeedCity }) {
           : areaFromCityPath(city, null);
       setMode(stored.mode);
       setArea(nextArea);
-      // Sources stay URL-only for QA — never restore from prefs.
+      if (sourcesViewEnabled) {
+        setSources(stored.sources);
+      }
       setTopics(stored.topics);
       setDate(stored.date);
       syncUrl(
         stored.mode,
         nextArea,
-        sources,
+        sourcesViewEnabled ? stored.sources : sources,
         stored.date,
         selectionFromParams(searchParams),
         stored.topics,
@@ -295,7 +302,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     }
     setPrefsHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [city, searchParams]);
+  }, [city, searchParams, sourcesViewEnabled]);
 
   useEffect(() => {
     setFeedView(readFeedView());
@@ -312,7 +319,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     rememberFeedPrefs(
       mode,
       area,
-      [],
+      sources,
       feedModeAllowsDate(mode) ? date : null,
       topics,
     );
@@ -607,6 +614,18 @@ function CityFeedCity({ city }: { city: FeedCity }) {
               </button>
             ))}
           </nav>
+
+          {sourcesViewEnabled && (
+            <SourceFilterMenu
+              options={citySources}
+              selected={sources}
+              onChange={(next) => {
+                setSources(next);
+                trackFeedSourcesChanged({ sources: next, city });
+                syncUrl(mode, area, next, date);
+              }}
+            />
+          )}
         </div>
 
         {error && (
@@ -661,6 +680,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
               {events.length === 0 && movies.length === 0 && (
                 <p className="muted">
                   Nothing in this view — try All topics
+                  {sourcesViewEnabled ? " and All sources" : ""}
                   {mode !== "date" ? ", pick Select Date" : ""}
                   {city === "sf" ? ", widen to Bay Area, " : ", "}
                   {topics.includes("movies") && city === "chicago"

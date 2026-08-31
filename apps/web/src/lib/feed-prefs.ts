@@ -15,6 +15,7 @@ import {
   type FeedMode,
   type FeedTopic,
 } from "@bored/shared";
+import { isSourcesViewEnabled } from "@/lib/dev-flags";
 
 export type { FeedArea, FeedCity, FeedTopic };
 
@@ -94,15 +95,15 @@ export type FeedPrefs = {
 export function rememberFeedPrefs(
   mode: FeedMode,
   area: FeedArea,
-  _sources: FeedFilterSource[] = [],
+  sources: FeedFilterSource[] = [],
   date: string | null = null,
   topics: FeedTopic[] = [],
 ) {
   try {
-    // Sources are QA-only via ?sources= — never persist into session prefs.
+    const persistedSources = isSourcesViewEnabled() ? sources : [];
     sessionStorage.setItem(
       KEY,
-      JSON.stringify({ mode, area, sources: [], date, topics }),
+      JSON.stringify({ mode, area, sources: persistedSources, date, topics }),
     );
   } catch {
     /* private mode / quota */
@@ -116,6 +117,7 @@ export function readFeedPrefs(): FeedPrefs | null {
     const parsed = JSON.parse(raw) as {
       mode?: string;
       area?: string;
+      sources?: string[] | string;
       topics?: string[] | string;
       date?: string | null;
     };
@@ -126,10 +128,15 @@ export function readFeedPrefs(): FeedPrefs | null {
         : parseFeedTopics(parsed.topics)
     ).filter((t) => FEED_TOPICS.includes(t));
     const mode = parseFeedMode(parsed.mode);
+    const sources = isSourcesViewEnabled()
+      ? Array.isArray(parsed.sources)
+        ? parseFeedSources(parsed.sources.join(","))
+        : parseFeedSources(parsed.sources)
+      : [];
     return {
       mode,
       area,
-      sources: [],
+      sources,
       topics,
       date: feedModeAllowsDate(mode) ? parseFeedDate(parsed.date) : null,
     };

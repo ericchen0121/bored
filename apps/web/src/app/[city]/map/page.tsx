@@ -46,6 +46,7 @@ import {
   rememberFeedPrefs,
   type FeedArea,
 } from "@/lib/feed-prefs";
+import { useSourcesViewEnabled } from "@/lib/dev-flags";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 function selectionFromParams(
@@ -112,6 +113,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
     searchParams.has("mode"),
   );
   const isDesktop = useMediaQuery("(min-width: 900px)");
+  const sourcesViewEnabled = useSourcesViewEnabled();
 
   const timeZone = timeZoneForArea(area);
   const selection = useMemo(
@@ -144,7 +146,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
       rememberFeedPrefs(
         nextMode,
         nextArea,
-        [],
+        nextSources,
         resolvedDate,
         nextTopics,
       );
@@ -187,15 +189,17 @@ function CityMapPage({ city }: { city: FeedCity }) {
           ? stored.area
           : areaFromCityPath(city, null);
       // Map always opens on Today; keep area / topics from prefs.
-      // Sources stay URL-only for QA — never restore from prefs.
       setMode("today");
       setArea(nextArea);
+      if (sourcesViewEnabled) {
+        setSources(stored.sources);
+      }
       setTopics(stored.topics);
       setDate(today);
       syncUrl(
         "today",
         nextArea,
-        sources,
+        sourcesViewEnabled ? stored.sources : sources,
         today,
         selectionFromParams(searchParams),
         stored.topics,
@@ -212,7 +216,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
     }
     setPrefsHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [city, searchParams]);
+  }, [city, searchParams, sourcesViewEnabled]);
 
   useEffect(() => {
     if (!prefsHydrated) return;
