@@ -66,7 +66,54 @@ export type BudgetPricedItem = {
   priceMax?: number | null;
   tags?: string[] | null;
   source?: string | null;
+  /** Infatuation-style ordinal 1–4 when present on payload */
+  dollarPrice?: number | null;
 };
+
+/** Feed / detail price line — handles free guestlist + paid tiers. */
+export function formatEventPriceLabel(item: BudgetPricedItem): string | null {
+  const fromTag = (item.tags ?? []).find((t) => /^price_\$+$/.test(t));
+  if (fromTag) return fromTag.replace(/^price_/, "");
+
+  if (
+    typeof item.dollarPrice === "number" &&
+    item.dollarPrice >= 1 &&
+    item.dollarPrice <= 4
+  ) {
+    return "$".repeat(item.dollarPrice);
+  }
+
+  if (
+    item.source === "food" &&
+    item.priceMin != null &&
+    item.priceMin >= 1 &&
+    item.priceMin <= 4 &&
+    item.priceMax === item.priceMin
+  ) {
+    return "$".repeat(item.priceMin);
+  }
+
+  if (item.isFree) {
+    const min = item.priceMin;
+    const max = item.priceMax;
+    if (min != null && min > 0) {
+      const paid =
+        max != null && max !== min ? `$${min}–$${max}` : `$${min}`;
+      return `Free · ${paid} tickets`;
+    }
+    return "Free";
+  }
+
+  if (item.priceMin != null) {
+    return `$${item.priceMin}${
+      item.priceMax != null && item.priceMax !== item.priceMin
+        ? `–$${item.priceMax}`
+        : ""
+    }`;
+  }
+
+  return null;
+}
 
 /**
  * Resolve an item's price band for budget filtering.

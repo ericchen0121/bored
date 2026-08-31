@@ -700,6 +700,9 @@ app.get("/v1/events/:id", async (c) => {
             categories:
               fresh.categories.length > 0 ? fresh.categories : row.categories,
             tags: fresh.tags.length > 0 ? fresh.tags : row.tags,
+            isFree: fresh.isFree,
+            priceMin: fresh.priceMin,
+            priceMax: fresh.priceMax,
             rawPayload: mergedPayload,
           };
           const [updated] = await db
@@ -1261,6 +1264,7 @@ app.get("/v1/feed", async (c) => {
         lng: coords.lng,
         isFree: e.isFree,
         priceMin: e.priceMin,
+        priceMax: e.priceMax,
         neighborhood: e.neighborhood,
         venueName: e.venueName,
         imageUrl:

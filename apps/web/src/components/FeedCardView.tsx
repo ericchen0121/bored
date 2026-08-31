@@ -82,6 +82,7 @@ export function FeedCardView({
     : isActivityTip
       ? activityTipFallbackLabel(card.recommendationLabel)
       : foodTipFallbackLabel(card.recommendationLabel);
+  const priceLabel = card.priceLabel;
   const regLabel =
     card.kind === "event"
       ? registrationStatusLabel(card.registrationStatus)
@@ -252,7 +253,7 @@ export function FeedCardView({
               {card.neighborhood ? ` · ${card.neighborhood}` : ""}
             </>
           )}
-          {card.isFree ? " · Free" : ""}
+          {priceLabel ? ` · ${priceLabel}` : ""}
         </div>
         {(tags.length > 0 || showReg) && (
           <div className="tags">

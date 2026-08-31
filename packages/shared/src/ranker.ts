@@ -1,4 +1,4 @@
-import { exceedsBudget } from "./budget";
+import { exceedsBudget, formatEventPriceLabel } from "./budget";
 import { dayCardLabel, dayKey } from "./datetime";
 import {
   exhibitionTimeScorePenalty,
@@ -90,6 +90,7 @@ export type Rankable = {
   lng?: number | null;
   isFree?: boolean;
   priceMin?: number | null;
+  priceMax?: number | null;
   neighborhood?: string | null;
   venueName?: string | null;
   imageUrl?: string | null;
@@ -198,6 +199,8 @@ function toCard(s: {
   categories: string[];
   tags?: string[];
   isFree?: boolean;
+  priceMin?: number | null;
+  priceMax?: number | null;
   url?: string | null;
   source?: string | null;
   registrationStatus?: FeedCard["registrationStatus"];
@@ -228,6 +231,13 @@ function toCard(s: {
     source: s.source ?? null,
     registrationStatus: s.registrationStatus ?? null,
     isFree: s.isFree,
+    priceLabel: formatEventPriceLabel({
+      isFree: s.isFree,
+      priceMin: s.priceMin,
+      priceMax: s.priceMax,
+      tags: s.tags,
+      source: s.source,
+    }),
     url: s.url ?? null,
     score: Number(s.score.toFixed(4)),
     bucket: s.bucket,

@@ -14,6 +14,7 @@ import {
   foodEditorialOutletLabel,
   foodRecommendationLabel,
   foodTipFallbackLabel,
+  formatEventPriceLabel,
   genreTagsForDisplay,
   igFoodRecommendationLabel,
   isActivityRecommendationSource,
@@ -59,35 +60,19 @@ import { EventWeatherInline } from "./EventWeatherInline";
 import type { EventDetail } from "./types";
 
 function formatDetailPrice(event: EventDetail): string {
-  if (event.isFree) return "Free";
-
-  // Infatuation-style ordinal $–$$$$ (never invent USD ranges from this scale)
-  const fromTag = (event.tags ?? []).find((t) => /^price_\$+$/.test(t));
-  if (fromTag) return fromTag.replace(/^price_/, "");
-
-  const dollars = event.rawPayload?.dollarPrice;
-  if (typeof dollars === "number" && dollars >= 1 && dollars <= 4) {
-    return "$".repeat(dollars);
-  }
-
-  if (
-    event.source === "food" &&
-    event.priceMin != null &&
-    event.priceMin >= 1 &&
-    event.priceMin <= 4 &&
-    event.priceMax === event.priceMin
-  ) {
-    return "$".repeat(event.priceMin);
-  }
-
-  if (event.priceMin != null) {
-    return `$${event.priceMin}${
-      event.priceMax && event.priceMax !== event.priceMin
-        ? `–$${event.priceMax}`
-        : ""
-    }`;
-  }
-  return "Price TBA";
+  return (
+    formatEventPriceLabel({
+      isFree: event.isFree,
+      priceMin: event.priceMin,
+      priceMax: event.priceMax,
+      tags: event.tags,
+      source: event.source,
+      dollarPrice:
+        typeof event.rawPayload?.dollarPrice === "number"
+          ? event.rawPayload.dollarPrice
+          : null,
+    }) ?? "Price TBA"
+  );
 }
 
 export function EventDetailContent({
@@ -432,12 +417,8 @@ export function EventDetailContent({
                     ? recommendationLabel
                       ? recommendationLabel
                       : "Food · Recommendation"
-                    : categoryLine || "Event"}
-            {event.isFree
-              ? categoryLine || isEvergreenTip
-                ? " · Free"
-                : "Free"
-              : ""}
+                    : categoryLine || (event.isFree ? "Free" : "Event")}
+            {event.isFree && categoryLine ? " · Free" : ""}
             {event.ageRestriction ? ` · ${event.ageRestriction}` : ""}
           </p>
           <SaveButton

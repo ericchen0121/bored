@@ -140,25 +140,58 @@ export function eventContentHash(ev: NormalizedEvent): string {
   ]);
 }
 
+/** True when copy advertises free admission (not "free skiing", "free agents", etc.). */
+export function mentionsFreeAdmission(text: string | null | undefined): boolean {
+  if (!text?.trim()) return false;
+  const lower = text.toLowerCase();
+  if (
+    /\bfree\s+(?:skiers?|skiing|boarders?|boarding|style|weights?|throw|agents?|will|dom|range)\b/.test(
+      lower,
+    )
+  ) {
+    return false;
+  }
+  return /\bfree\b|no cover|\$0\b/.test(lower);
+}
+
+/** Ticket prices from copy — prefer $ amounts so times/minutes don't pollute ranges. */
+function extractPriceAmounts(text: string): number[] {
+  const dollar = [...text.matchAll(/\$\s*(\d+(?:\.\d+)?)/g)].map((m) =>
+    Math.round(Number(m[1])),
+  );
+  if (dollar.length) return dollar;
+  return [
+    ...text.matchAll(
+      /\b(?:tix|tickets?|cover|admission|cost|price).{0,12}(\d+(?:\.\d+)?)/gi,
+    ),
+  ].map((m) => Math.round(Number(m[1])));
+}
+
 export function parsePrice(text: string | null | undefined): {
   priceMin: number | null;
   priceMax: number | null;
   isFree: boolean;
 } {
   if (!text) return { priceMin: null, priceMax: null, isFree: false };
-  const lower = text.toLowerCase();
-  if (/\bfree\b|no cover|\$0/.test(lower)) {
+  const nums = extractPriceAmounts(text);
+  const hasFreeOption = mentionsFreeAdmission(text);
+  if (nums.length) {
+    const paidNums = nums.filter((n) => n > 0);
+    if (hasFreeOption && paidNums.length) {
+      return {
+        priceMin: Math.min(...paidNums),
+        priceMax: Math.max(...paidNums),
+        isFree: true,
+      };
+    }
+    const priceMin = Math.min(...nums);
+    const priceMax = Math.max(...nums);
+    return { priceMin, priceMax, isFree: priceMin === 0 };
+  }
+  if (hasFreeOption) {
     return { priceMin: 0, priceMax: 0, isFree: true };
   }
-  const nums = [...text.matchAll(/\$?\s*(\d+(?:\.\d+)?)/g)].map((m) =>
-    Math.round(Number(m[1])),
-  );
-  if (!nums.length) return { priceMin: null, priceMax: null, isFree: false };
-  return {
-    priceMin: Math.min(...nums),
-    priceMax: Math.max(...nums),
-    isFree: Math.min(...nums) === 0,
-  };
+  return { priceMin: null, priceMax: null, isFree: false };
 }
 
 export async function fetchText(url: string, init?: RequestInit): Promise<string> {

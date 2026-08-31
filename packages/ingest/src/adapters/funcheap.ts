@@ -6,6 +6,7 @@ import {
 import {
   contentHash,
   fetchText,
+  mentionsFreeAdmission,
   parsePrice,
   type NormalizedEvent,
   type SourceAdapter,
@@ -121,10 +122,6 @@ function parseListingPage(html: string): NormalizedEvent[] {
     const costText = node.find(".cost").parent().text() || node.text();
     const bodySnippet = node.find("p").first().text().slice(0, 500);
     const { priceMin, priceMax, isFree } = parsePrice(`${title} ${costText}`);
-    const free =
-      isFree ||
-      /\bfree\b/i.test(costText) ||
-      /\bfree\b/i.test(title);
 
     const classes = (node.attr("class") ?? "").toLowerCase();
     const slugs = parseFuncheapCategorySlugs(classes);
@@ -162,9 +159,9 @@ function parseListingPage(html: string): NormalizedEvent[] {
       endsAt,
       timezone: "America/Los_Angeles",
       city,
-      priceMin: free ? 0 : priceMin,
+      priceMin,
       priceMax,
-      isFree: free,
+      isFree,
       categories,
       tags,
       imageUrl,
@@ -229,7 +226,7 @@ async function parseRssFeed(): Promise<NormalizedEvent[]> {
       city: inferCity("", title),
       priceMin,
       priceMax,
-      isFree: isFree || /free/i.test(title),
+      isFree: isFree || mentionsFreeAdmission(title),
       categories,
       tags: [...tags, "rss"],
       url: link,
@@ -279,19 +276,23 @@ export function funcheapTaxonomy(
   const hasLiveMusic =
     slugSet.has("live-music-event") || slugSet.has("club-dj");
   const hasTheater = slugSet.has("theater-performance");
+  const hasOutdoors = slugSet.has("outdoors");
+  const hasSports = slugSet.has("sports-fitness");
   const hasLecture =
     slugSet.has("lectures-workshops") ||
-    /\btalk\b|lecture|workshop|panel discussion/i.test(text);
+    /\b(lecture|panel discussion)\b/i.test(text) ||
+    (/\b(talk|workshop)\b/i.test(text) && !hasSports);
   const hasPolitics =
     slugSet.has("political-activism") || /politic/i.test(text);
   const hasFoodSlug = slugSet.has("eating-drinking");
-  const hasOutdoors = slugSet.has("outdoors");
-  const hasSports = slugSet.has("sports-fitness");
   const hasKids = slugSet.has("kids-families");
   const hasLiterature = slugSet.has("literature");
   const hasHistory = slugSet.has("history");
   const hasMovies =
-    slugSet.has("movies") || /film|movie|cinema|drive-in/i.test(text);
+    slugSet.has("movies") ||
+    /\b(film festival|screening|cinema|drive-in|movie night|short film)\b/i.test(
+      text,
+    );
   const hasTechTitle =
     /\b(ai |agents?|startup|developer|hackathon|tech |builders? night)\b/i.test(
       text,
@@ -302,6 +303,7 @@ export function funcheapTaxonomy(
     tags.add("comedy");
   }
   if (hasGames && !hasNightMarket && !hasComedy) {
+    categories.add("nightlife");
     tags.add("games");
     if (/tournament|fighters|esports/i.test(text)) tags.add("tournament");
   }
@@ -347,12 +349,21 @@ export function funcheapTaxonomy(
   } else if (!hasFoodSlug && foodInCopy && !hasGames) {
     categories.add("food");
   }
+  if (
+    hasFoodSlug &&
+    hasComedy &&
+    /drink|beer|cocktail|michelada|happy hour|\bbar\b/i.test(text)
+  ) {
+    categories.add("nightlife");
+    tags.add("drinks");
+  }
 
   if (slugSet.has("fairs-festivals")) tags.add("festival");
   if (slugSet.has("shopping-fashion")) tags.add("shopping");
   if (hasTechTitle && !hasComedy) categories.add("tech");
 
-  if (/\bfree\b/i.test(text)) categories.add("free");
+  const priced = parsePrice(text);
+  if (priced.isFree) categories.add("free");
 
   // RSS / sparse rows — fall back to coarse text heuristics
   if (slugs.length === 0) {
@@ -363,8 +374,6 @@ export function funcheapTaxonomy(
     if (/outdoor|park|hike|bike/i.test(text)) categories.add("outdoors");
     if (/nightlife|club night|party/i.test(text)) categories.add("nightlife");
   }
-
-  if (categories.size === 0) categories.add("free");
 
   return { categories: [...categories], tags: [...tags] };
 }
@@ -454,6 +463,9 @@ export type EventbriteEnrichment = {
   description: string | null;
   tags: string[];
   categories: string[];
+  priceMin: number | null;
+  priceMax: number | null;
+  isFree: boolean;
 };
 
 /** Scrape public Eventbrite listing metadata linked from Funcheap posts. */
@@ -495,13 +507,17 @@ export async function enrichEventbriteListing(
     if (/\btalk\b|lecture|panel/i.test(text)) tags.add("talk");
   }
   if (/tournament|game|gaming|esports/i.test(text)) tags.add("games");
-  if (/free\b/i.test(text)) categories.add("free");
+  const { priceMin, priceMax, isFree } = parsePrice(`${title} ${description ?? ""}`);
+  if (isFree) categories.add("free");
 
   return {
     imageUrl,
     description,
     tags: [...tags],
     categories: [...categories],
+    priceMin,
+    priceMax,
+    isFree,
   };
 }
 
@@ -663,6 +679,9 @@ export type FuncheapEnrichment = {
   imageUrl: string | null;
   categories: string[];
   tags: string[];
+  priceMin: number | null;
+  priceMax: number | null;
+  isFree: boolean;
 };
 
 /**
@@ -749,12 +768,23 @@ export async function enrichFuncheapEvent(
   let taxonomy = funcheapTaxonomy(slugs, title, `${description ?? ""}`);
 
   let eventbriteImage: string | null = null;
+  let priceMin: number | null = null;
+  let priceMax: number | null = null;
+  let isFree = false;
+  const priceFromCopy = parsePrice(`${title} ${description ?? ""}`);
+  priceMin = priceFromCopy.priceMin;
+  priceMax = priceFromCopy.priceMax;
+  isFree = priceFromCopy.isFree;
+
   if (eventDetailsUrl?.includes("eventbrite.com")) {
     const eb = await enrichEventbriteListing(eventDetailsUrl);
     if (eb) {
       taxonomy = mergeTaxonomy(taxonomy, eb);
       if (!description && eb.description) description = eb.description;
       eventbriteImage = eb.imageUrl;
+      if (eb.priceMin != null) priceMin = eb.priceMin;
+      if (eb.priceMax != null) priceMax = eb.priceMax;
+      isFree = eb.isFree;
     }
   }
 
@@ -780,5 +810,8 @@ export async function enrichFuncheapEvent(
     imageUrl: finalImage,
     categories: taxonomy.categories,
     tags: taxonomy.tags,
+    priceMin,
+    priceMax,
+    isFree,
   };
 }

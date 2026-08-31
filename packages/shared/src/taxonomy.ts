@@ -163,6 +163,8 @@ const TAG_DISPLAY_NOISE = new Set([
   "partiful",
   "trending",
   "newsletter",
+  "eddieslist",
+  "brokeassstuart",
   "instagram",
   "openmic_agg",
   "indie_theater",

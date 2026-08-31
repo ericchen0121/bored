@@ -24,7 +24,7 @@ const FEEDS = [
   {
     id: "eddieslist",
     url: "https://www.eddies-list.com/feed",
-    categories: ["arts", "food", "free"],
+    categories: ["arts"],
   },
 ];
 
@@ -105,9 +105,12 @@ function isCuratedArticleNotEvent(title: string, link: string, body: string): bo
     return true;
   }
 
-  // Evergreen guides / news explainers / venue directories (not a single outing)
+  // Evergreen guides / venue directories (not a single outing)
   if (
-    /\/p\/(directory|about)\b/i.test(slug) ||
+    /\bevents?\s*&\s*classes\b/i.test(t) ||
+    /\bevents?,?\s*(clubs?|classes?).{0,20}(pop-ups?|&)/i.test(t) ||
+    /\b(last updated:|sign up below|keep up on last-minute)\b/i.test(text) ||
+    /\/p\/(salsa-dancing|directory|about)\b/i.test(slug) ||
     /\b(how to|where to|insider advice|first-timer|etiquette|guide|grants?|data centers?|311 services|dating apps|facial scanning|smart glasses|pay what you can day)\b/i.test(
       t,
     ) ||
@@ -138,17 +141,16 @@ function extractEventsFromProse(
   link: string,
   feed: { id: string; categories: string[] },
 ): NormalizedEvent[] {
-  const text = `${title}. ${body}`;
-  const startsAt = guessDate(text);
+  const startsAt = guessDate(title);
   // No invented fallback dates — a blog post without a concrete when is not an event.
   if (!startsAt) return [];
 
-  const { priceMin, priceMax, isFree } = parsePrice(text);
+  const { priceMin, priceMax, isFree } = parsePrice(`${title} ${body.slice(0, 500)}`);
   const categories = [...feed.categories];
-  if (/comedy|standup|stand-up/i.test(text)) categories.push("comedy.showcase");
-  if (/techno|house|dj|rave/i.test(text)) categories.push("music.electronic");
-  if (/concert|band|live music/i.test(text)) categories.push("music.live");
-  if (/film|movie|screening/i.test(text)) categories.push("movies");
+  if (/comedy|standup|stand-up/i.test(title)) categories.push("comedy.showcase");
+  if (/techno|house|dj|rave/i.test(title)) categories.push("music.electronic");
+  if (/concert|band|live music/i.test(title)) categories.push("music.live");
+  if (/film|movie|screening/i.test(title)) categories.push("movies");
 
   return [
     {
