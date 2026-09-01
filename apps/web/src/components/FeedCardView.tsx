@@ -9,6 +9,7 @@ import {
   foodTipFallbackLabel,
   isActivityRecommendationSource,
   isExhibitionTag,
+  exhibitionFeedTimeLabel,
   isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
@@ -148,7 +149,7 @@ export function FeedCardView({
       : isEvergreenTip
         ? null
         : isExhibition
-          ? card.recommendationLabel?.replace(/^Exhibition · /, "") ?? "Exhibition"
+          ? exhibitionFeedTimeLabel()
           : isTimeTba
             ? tbaWhen
               ? `${formatDayOnly(card.startsAt, timeZone)} · ${tbaWhen}`
@@ -227,9 +228,9 @@ export function FeedCardView({
             </>
           ) : isExhibition ? (
             <>
-              {card.recommendationLabel ?? "Exhibition"}
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+              {card.venueName ?? ""}
+              {card.venueName && card.neighborhood ? " · " : ""}
+              {card.neighborhood ?? ""}
             </>
           ) : isTimeTba ? (
             <>

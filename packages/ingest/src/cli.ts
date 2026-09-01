@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import cron from "node-cron";
 import { resolve } from "node:path";
 import { ALL_ADAPTERS, PHASE1_ADAPTERS, runAll, runAdapter } from "./runner.js";
-import { startIngestJobPoller } from "./jobPoller.js";
+import { processNextIngestJob, startIngestJobPoller } from "./jobPoller.js";
 import { STATIC_INGEST_SCHEDULES } from "./schedules.js";
 
 config({ path: resolve(process.cwd(), "../../.env") });
@@ -10,6 +10,7 @@ config();
 
 const args = process.argv.slice(2);
 const once = args.includes("--once");
+const jobs = args.includes("--jobs");
 const schedule = args.includes("--schedule");
 const phase1 = args.includes("--phase1");
 const backfillTicketImages = args.includes("--backfill-ticket-images");
@@ -39,6 +40,17 @@ async function main() {
     : phase1
       ? PHASE1_ADAPTERS
       : ALL_ADAPTERS;
+
+  if (jobs) {
+    let processed = 0;
+    while (await processNextIngestJob()) processed += 1;
+    if (processed > 0) {
+      console.log(`Processed ${processed} admin ingest job(s)`);
+    }
+    if (!once && !phase1 && !only && !schedule) {
+      process.exit(0);
+    }
+  }
 
   if (!adapters.length) {
     console.error("No adapters matched");

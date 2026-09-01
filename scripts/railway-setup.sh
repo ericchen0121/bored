@@ -24,11 +24,16 @@ railway add --database postgres 2>/dev/null || true
 echo "Ensuring services…"
 railway add --service api 2>/dev/null || true
 railway add --service web 2>/dev/null || true
-railway add --service ingest 2>/dev/null || true
+railway add --service ingest-phase1 2>/dev/null || true
+railway add --service ingest-movies 2>/dev/null || true
+railway add --service ingest-daily 2>/dev/null || true
 
 echo ""
+echo "For ingest cron wiring (replaces always-on worker):"
+echo "  bash scripts/railway-ingest-cron-setup.sh"
+echo ""
 echo "Next (run once per service after linking):"
-echo "  1. railway service link  # pick api / web / ingest"
+echo "  1. railway service link  # pick api / web / ingest-* "
 echo "  2. Set variables (see docs/deploy.md)"
 echo "  3. railway up"
 echo ""

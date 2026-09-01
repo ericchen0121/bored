@@ -1,0 +1,10 @@
+# Railway cron: Roxie / indie_theater showtimes every 12h (UTC).
+# Service root directory: railway/ingest-movies
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "../../Dockerfile"
+
+[deploy]
+cronSchedule = "0 */12 * * *"
+restartPolicyType = "NEVER"

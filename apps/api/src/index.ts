@@ -24,7 +24,6 @@ import {
   eventTimesPreview,
   FEED_TIMES_PREVIEW_LIMIT,
   exhibitionScheduleFromPayload,
-  exhibitionWhenLabel,
   expandSourceFilter,
   extractMusicPlatformRef,
   expandFoodDealRowsForFeed,
@@ -1271,7 +1270,7 @@ app.get("/v1/feed", async (c) => {
         ? dailyHoursFromPayload(payload)
         : null;
       const recommendationLabel = exhibitionSchedule
-        ? `Exhibition · ${exhibitionWhenLabel(exhibitionSchedule, locDefault.timezone)}`
+        ? null
         : tbaHours
           ? formatDailyHoursLabel(tbaHours)
         : isFoodDeal

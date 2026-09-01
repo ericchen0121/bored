@@ -5,6 +5,7 @@ import type { FeedCard } from "@bored/shared";
 import {
   activityTipFallbackLabel,
   eventScanTagsForDisplay,
+  exhibitionFeedTimeLabel,
   foodTipFallbackLabel,
   isActivityRecommendationSource,
   isExhibitionTag,
@@ -109,8 +110,7 @@ function TimelineRow({
         <span className="timeline-row__time is-untimed">Tip</span>
       ) : isExhibition ? (
         <span className="timeline-row__time is-untimed">
-          {card.recommendationLabel?.replace(/^Exhibition · /, "") ??
-            "Exhibition"}
+          {exhibitionFeedTimeLabel()}
         </span>
       ) : isTimeTba ? (
         <span className="timeline-row__time is-untimed">
@@ -136,16 +136,16 @@ function TimelineRow({
         )}
         <div className="timeline-row__copy">
           <h3>{card.title}</h3>
-          {(place || card.isFree || isEvergreenTip || isFoodDeal || isExhibition || isTimeTba) && (
+          {(place || card.isFree || isEvergreenTip || isFoodDeal || isTimeTba) && (
             <p className="meta">
               {isEvergreenTip
                 ? tipLabel
-                : isFoodDeal || isExhibition
+                : isFoodDeal
                   ? card.recommendationLabel
                   : null}
-              {(isEvergreenTip || isFoodDeal || isExhibition) && place ? " · " : ""}
+              {(isEvergreenTip || isFoodDeal) && place ? " · " : ""}
               {place}
-              {(place || isEvergreenTip || isFoodDeal || isExhibition || isTimeTba) && card.isFree ? " · " : ""}
+              {(place || isEvergreenTip || isFoodDeal || isTimeTba) && card.isFree ? " · " : ""}
               {card.isFree ? "Free" : ""}
             </p>
           )}
@@ -301,15 +301,18 @@ export function ByTimeFeed({
     setShowEarlier(false);
   }, [collapseEarlier, cards]);
 
-  const timed = cards.filter(
+  const exhibitionCards = cards.filter((c) => isExhibitionTag(c.tags));
+  const withoutExhibitions = cards.filter((c) => !isExhibitionTag(c.tags));
+
+  const timed = withoutExhibitions.filter(
     (c) =>
       !isFoodRecommendationSource(c.source ?? "", c.categories) &&
       !isNewRestaurantRecommendationSource(c.source),
   );
-  const foodTips = cards.filter((c) =>
+  const foodTips = withoutExhibitions.filter((c) =>
     isFoodRecommendationSource(c.source ?? "", c.categories),
   );
-  const newRestaurants = cards.filter((c) =>
+  const newRestaurants = withoutExhibitions.filter((c) =>
     isNewRestaurantRecommendationSource(c.source),
   );
 
@@ -423,12 +426,27 @@ export function ByTimeFeed({
   });
   rowIndex = foodSection.nextIndex;
 
+  const exhibitionSection = TipSection({
+    heading: "On view",
+    cards: exhibitionCards,
+    timeZone,
+    onSelect,
+    isSelected,
+    hideDayHeadings,
+    rowIndexStart: rowIndex,
+    variant,
+    now,
+  });
+  rowIndex = exhibitionSection.nextIndex;
+
   const tipBlocks = (
     <>
       {newRestaurantsSection.node}
       {foodSection.node}
     </>
   );
+
+  const exhibitionBlock = exhibitionSection.node;
 
   const layoutClass = variant === "default" ? "" : ` by-time--${variant}`;
 
@@ -439,6 +457,7 @@ export function ByTimeFeed({
       {earlierSection}
       {timedSections}
       {!tipsFirst ? tipBlocks : null}
+      {exhibitionBlock}
     </div>
   );
 }

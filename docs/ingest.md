@@ -56,7 +56,7 @@ pnpm --filter @bored/ingest exec playwright install chromium
 | `ticketmaster_chi` | Discovery API latlong CHI + 40mi | `TICKETMASTER_API_KEY` | Same `source=ticketmaster`; IL only. Same coalesce/cap, `info`→description, non-fallback image pick + sports attraction enrich as SF. |
 | `comedy_venue` / `comedy_venue_chi` | TM keyword comedy clubs | `TICKETMASTER_API_KEY` | SF: Cobb's / Punch Line; CHI: Zanies, Laugh Factory, Comedy Bar, Second City, iO. Same coalesce/cap + TM image/`info` mapping; orphans + legacy group-key ids pruned. |
 | `recurring` | `recurring_shows` table | No | One durable row per active show; feed expands weekdays |
-| `movies_tms` | Gracenote TMS showtimes | `TMS_API_KEY` | Showtimes + Fandango ticket links; enrich via Letterboxd/RT scrape |
+| `movies_tms` | Gracenote TMS showtimes | `TMS_API_KEY` | Optional; skipped without key. **Not in Phase 1** — production movies showtimes come from Roxie via `indie_theater` on a 12h cron. |
 | `do312` | Do312 events.json | No | Chicago local calendar. Soft-coalesce + multi-day prune + [long-running exhibitions](#long-running-exhibitions-dola--do312) |
 | `chicago_cheap` | chicagoonthecheap.com/events/ | No | Free/cheap editorial calendar (Funcheap analog) |
 | `ra_chi` / `ra_sf` | Resident Advisor GraphQL | No | Lineup, genres, flyer, age, cost; `source=ra` |
@@ -314,11 +314,15 @@ Env (see `.env.example`):
 | `BROWSER_IMAGE_SCRAPE_CAP` | `40` | Max browser pages per pass |
 | `BROWSER_IMAGE_SCRAPE_CONCURRENCY` | `2` | Parallel pages (max 4) |
 
-## Schedules (`--schedule`)
+## Schedules
 
-- Every 6h: Phase 1 adapters
-- Every 3h: movies TMS
-- Daily 06:15: all adapters
+**Production (Railway cron)** — one-shot runs via `SERVICE=ingest-cron` + `INGEST_CRON_TASK` (see [deploy.md](./deploy.md)):
+
+- Every **6h** UTC: Phase 1 adapters (`ingest-phase1`)
+- Every **12h** UTC: Roxie calendar via `indie_theater` (`ingest-movies`)
+- Daily **06:15** UTC: all adapters (`ingest-daily`)
+
+**Local dev (`--schedule`)** — same cadence in `packages/ingest/src/schedules.ts` via in-process `node-cron` + admin job poller.
 
 ## Adding a source
 

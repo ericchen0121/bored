@@ -15,8 +15,27 @@ case "$SERVICE" in
     exec pnpm --filter @bored/web start
     ;;
   ingest)
-    echo "[entrypoint] starting ingest scheduler"
+    echo "[entrypoint] starting ingest scheduler (local dev — use ingest-cron in production)"
     exec pnpm --filter @bored/ingest start
+    ;;
+  ingest-cron)
+    TASK="${INGEST_CRON_TASK:?Set INGEST_CRON_TASK=phase1|movies|daily}"
+    echo "[entrypoint] ingest cron task=${TASK}"
+    case "$TASK" in
+      phase1)
+        exec pnpm --filter @bored/ingest exec tsx src/cli.ts --jobs --once --phase1
+        ;;
+      movies)
+        exec pnpm --filter @bored/ingest exec tsx src/cli.ts --jobs --once --only=indie_theater
+        ;;
+      daily)
+        exec pnpm --filter @bored/ingest exec tsx src/cli.ts --jobs --once
+        ;;
+      *)
+        echo "Unknown INGEST_CRON_TASK=$TASK (expected phase1|movies|daily)" >&2
+        exit 1
+        ;;
+    esac
     ;;
   migrate)
     exec pnpm db:migrate

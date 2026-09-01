@@ -54,8 +54,6 @@ const MONTHS: Record<string, number> = {
   december: 11,
 };
 
-const EXHIBITION_SOURCES = new Set(["dola", "do312"]);
-
 /** Parse ISO-ish string using wall clock in `timeZone` (ignore bogus offsets). */
 export function parseWallClockIso(
   iso: string | null | undefined,
@@ -264,6 +262,30 @@ export function exhibitionWhenLabel(
   return `${startLabel} – ${endLabel}`;
 }
 
+/** Short timeline / card time column — dates live on the detail page. */
+export const EXHIBITION_FEED_TIME_LABEL = "On view";
+
+export function exhibitionFeedTimeLabel(): string {
+  return EXHIBITION_FEED_TIME_LABEL;
+}
+
+/** Stable late-day slot so exhibitions sort to the bottom of Today’s chrono list. */
+function exhibitionStableLateSlot(
+  stableId: string,
+  localDay: string,
+  timeZone: string,
+): Date {
+  const [y, m, d] = localDay.split("-").map(Number);
+  let hash = 0;
+  for (let i = 0; i < stableId.length; i++) {
+    hash = (hash * 31 + stableId.charCodeAt(i)) >>> 0;
+  }
+  const offsetMin = hash % 181;
+  const h = 20 + Math.floor(offsetMin / 60);
+  const mi = offsetMin % 60;
+  return fromZonedTime(y!, m!, d!, h, mi, 0, timeZone);
+}
+
 export function exhibitionStartsAtForFeed(
   schedule: ExhibitionSchedule,
   stableId: string,
@@ -272,9 +294,11 @@ export function exhibitionStartsAtForFeed(
 ): Date {
   const today = dayKey(now, timeZone);
   if (today >= schedule.runStart && today <= schedule.runEnd) {
-    const [y, m, d] = today.split("-").map(Number);
-    const noon = fromZonedTime(y!, m!, d!, 12, 0, 0, timeZone);
-    if (noon.getTime() > now.getTime() + 30 * 60000) return noon;
+    const slot = exhibitionStableLateSlot(stableId, today, timeZone);
+    const { end } = calendarDayBounds(today, timeZone);
+    const endOfDay = new Date(end.getTime() - 1);
+    if (slot.getTime() > now.getTime() + 30 * 60000) return slot;
+    return endOfDay;
   }
   return suggestionStartsAt(stableId, null);
 }
@@ -324,11 +348,7 @@ export function expandExhibitionRowsForFeed<
   const out: T[] = [];
   for (const row of rows) {
     const schedule = exhibitionScheduleFromPayload(row.rawPayload);
-    if (
-      !schedule ||
-      !EXHIBITION_SOURCES.has(row.source) ||
-      !isExhibitionTag(row.tags ?? [])
-    ) {
+    if (!schedule) {
       out.push(row);
       continue;
     }

@@ -1,4 +1,4 @@
-/** Static cron metadata — mirrors cli.ts until durable DB schedules (Phase 2). */
+/** Static ingest schedules — source of truth for local `--schedule` and Railway cron services. */
 
 export type StaticIngestSchedule = {
   id: string;
@@ -7,6 +7,8 @@ export type StaticIngestSchedule = {
   scope: "phase1" | "all" | "adapters";
   adapterIds?: string[];
   description: string;
+  /** Railway cron service name (see `railway/ingest-<task>/railway.toml`). */
+  railwayService?: string;
 };
 
 export const STATIC_INGEST_SCHEDULES: StaticIngestSchedule[] = [
@@ -16,6 +18,7 @@ export const STATIC_INGEST_SCHEDULES: StaticIngestSchedule[] = [
     label: "Every 6 hours",
     scope: "phase1",
     description: "Core scrapers (Phase 1 adapters)",
+    railwayService: "ingest-phase1",
   },
   {
     id: "all_daily",
@@ -23,13 +26,15 @@ export const STATIC_INGEST_SCHEDULES: StaticIngestSchedule[] = [
     label: "Daily 06:15 UTC",
     scope: "all",
     description: "All adapters (Phase 2 + recurring)",
+    railwayService: "ingest-daily",
   },
   {
-    id: "movies_3h",
-    cron: "0 */3 * * *",
-    label: "Every 3 hours",
+    id: "movies_12h",
+    cron: "0 */12 * * *",
+    label: "Every 12 hours",
     scope: "adapters",
-    adapterIds: ["movies_tms"],
-    description: "Movies TMS only",
+    adapterIds: ["indie_theater"],
+    description: "Roxie calendar (indie_theater) showtimes",
+    railwayService: "ingest-movies",
   },
 ];

@@ -9,7 +9,9 @@ How to run Bored in production: **Postgres**, **API**, **web**, and **ingest** (
 | **Postgres** | Railway plugin | — | Provides `DATABASE_URL` |
 | **api** | Hono REST | `api` | Runs `pnpm db:migrate` then listens on `$PORT`; health `GET /health` |
 | **web** | Next.js | `web` | Needs `NEXT_PUBLIC_API_URL` at **build** time |
-| **ingest** | Cron scrapers | `ingest` | Schedules in `packages/ingest/src/schedules.ts`; Playwright optional |
+| **ingest-phase1** | Cron scrapers | `ingest-cron` + `INGEST_CRON_TASK=phase1` | Phase 1 every 6h UTC |
+| **ingest-movies** | Cron scrapers | `ingest-cron` + `INGEST_CRON_TASK=movies` | Roxie (`indie_theater`) every 12h UTC |
+| **ingest-daily** | Cron scrapers | `ingest-cron` + `INGEST_CRON_TASK=daily` | All adapters daily 06:15 UTC |
 
 Local Docker Compose (`docker-compose.yml`) is **dev only** (Postgres). Production DB is the Railway Postgres plugin.
 
@@ -33,13 +35,14 @@ Or in the Railway dashboard: New Project → Add Postgres → Add three empty se
 
 All three app services build from the **repo root** `Dockerfile`.
 
-| | api | web | ingest |
+| | api | web | ingest-phase1 / ingest-movies / ingest-daily |
 |---|---|---|---|
-| Root directory | `/` | `/` | `/` |
-| Dockerfile | `Dockerfile` | `Dockerfile` | `Dockerfile` |
-| `SERVICE` | `api` | `web` | `ingest` |
-| Health check | `/health` | `/` (or none) | none |
-| Build args | — | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `NEXT_PUBLIC_POSTHOG_*` | `INSTALL_PLAYWRIGHT=1` if flyer scrape needed |
+| Root directory | `/` | `/` | `railway/ingest-phase1` etc. |
+| Dockerfile | `Dockerfile` | `Dockerfile` | `../../Dockerfile` (via service `railway.toml`) |
+| `SERVICE` | `api` | `web` | `ingest-cron` |
+| `INGEST_CRON_TASK` | — | — | `phase1` \| `movies` \| `daily` |
+| Health check | `/health` | `/` (or none) | none (cron exits) |
+| Build args | — | `NEXT_PUBLIC_*` | — |
 
 ### Variables
 
@@ -47,17 +50,16 @@ All three app services build from the **repo root** `Dockerfile`.
 
 | Variable | Services | Notes |
 |---|---|---|
-| `DATABASE_URL` | api, ingest | From Postgres plugin (SSL auto-detected) |
+| `DATABASE_URL` | api, ingest-* | From Postgres plugin (SSL auto-detected) |
 | `ADMIN_TOKEN` | api | Required for `/admin` + `/v1/admin/*` |
 | `WEB_ORIGIN` | api | Public web origin for CORS (e.g. `https://bored.up.railway.app`) |
 | `DEMO_USER_ID` | api | Optional; same UUID as local if you want continuity |
-| `TICKETMASTER_API_KEY` | ingest | Optional |
-| `TMS_API_KEY` | ingest | Optional |
-| `YOUTUBE_API_KEY` | ingest | Optional |
-| `GOOGLE_MAPS_API_KEY` | ingest | Optional hero photos |
-| `IG_ACCESS_TOKEN` / `IG_BUSINESS_USER_ID` | ingest | Optional |
-| `BROWSER_IMAGE_SCRAPE` | ingest | `0` until Chromium installed (`INSTALL_PLAYWRIGHT=1`) |
-| `INGEST_RUN_ON_BOOT` | ingest | Set `1` to run Phase 1 once when the worker starts |
+| `TICKETMASTER_API_KEY` | ingest-* | Optional |
+| `TMS_API_KEY` | ingest-* | Optional (unused in prod today — movies showtimes come from Roxie via `indie_theater`) |
+| `YOUTUBE_API_KEY` | ingest-* | Optional |
+| `GOOGLE_MAPS_API_KEY` | ingest-* | Optional hero photos |
+| `IG_ACCESS_TOKEN` / `IG_BUSINESS_USER_ID` | ingest-* | Optional |
+| `BROWSER_IMAGE_SCRAPE` | ingest-* | `0` until Chromium installed (`INSTALL_PLAYWRIGHT=1`) |
 | `NEXT_PUBLIC_API_URL` | web (**build**) | Public API URL, e.g. `https://api-….up.railway.app` |
 | `NEXT_PUBLIC_SITE_URL` | web (**build**) | **Required in production.** Public web origin for canonical URLs, JSON-LD, OG/share cards, sitemap, and `llms.txt` (e.g. `https://bored-app.up.railway.app`) |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | web (**build**) | Map page |
@@ -88,7 +90,10 @@ Current production hosts (Railway-provided; `bored` was taken):
 railway link          # once
 railway up --service api
 railway up --service web
-railway up --service ingest
+bash scripts/railway-ingest-cron-setup.sh   # cron schedules + shared ingest vars
+railway up --detach --service ingest-phase1
+railway up --detach --service ingest-movies
+railway up --detach --service ingest-daily
 ```
 
 Or connect GitHub and enable auto-deploy on `main`.
@@ -100,12 +105,12 @@ Or connect GitHub and enable auto-deploy on `main`.
 3. Open web URL — feed loads (empty until ingest runs)
 4. Trigger seed or first scrape:
    ```bash
-   railway run --service ingest -- pnpm --filter @bored/ingest once -- --phase1
+   railway run --service ingest-phase1 -- pnpm --filter @bored/ingest once -- --phase1
    ```
    Or wait for the 6h Phase 1 cron / daily full run.
 5. Optional flyer backfill (needs Playwright on ingest image):
    ```bash
-   railway run --service ingest -- pnpm ingest:backfill-images -- --limit=200
+   railway run --service ingest-phase1 -- pnpm ingest:backfill-images -- --limit=200
    ```
 
 ### Local DB already created with `db:push`
@@ -138,14 +143,15 @@ docker run --rm -e SERVICE=api -e DATABASE_URL -e PORT=4000 -p 4000:4000 bored
 
 ## Ingest schedules (production)
 
-Same as local `--schedule` ([ingest.md](./ingest.md)):
+Railway **cron services** (not an always-on worker) — see `packages/ingest/src/schedules.ts` and `railway/ingest-*/railway.toml`:
 
-- Every 6h — Phase 1 adapters
-- Every 3h — movies TMS
-- Daily 06:15 UTC — all adapters
-- Admin job poller — on demand from `/admin`
+- Every **6h** UTC — Phase 1 adapters (`ingest-phase1`)
+- Every **12h** UTC — Roxie showtimes via `indie_theater` (`ingest-movies`)
+- Daily **06:15** UTC — all adapters (`ingest-daily`)
 
-Keep **ingest** as a always-on worker (not a one-shot cron) so `node-cron` + the admin job poller stay alive.
+Each run drains pending admin `ingest_jobs` first (`--jobs`), then exits. Local dev still uses `pnpm --filter @bored/ingest start` (`--schedule` + in-process poller).
+
+One-time setup: `bash scripts/railway-ingest-cron-setup.sh` (creates services, copies ingest vars, sleeps legacy `ingest` worker if present).
 
 ## Go-live data hygiene
 
@@ -168,7 +174,7 @@ Bored does **not** run Redis locally or in production. Caching and queues use Po
 | Need today | Implementation |
 |---|---|
 | Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **15m** TTL via `TODAY_FEED_CACHE_TTL_MS`, max **24** entries, `limit` ≤ 200 only). Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. |
-| Admin ingest queue | Postgres `ingest_jobs`, polled by the ingest worker |
+| Admin ingest queue | Postgres `ingest_jobs`, drained at the start of each Railway cron run |
 | Adapter / scrape caches | Postgres columns or per-run in-memory maps |
 
 Add Redis (e.g. Railway plugin + `REDIS_URL`) when one of these becomes a bottleneck:

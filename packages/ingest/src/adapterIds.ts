@@ -51,7 +51,6 @@ export const PHASE1_ADAPTER_IDS = [
   "comedy_venue_chi",
   "comedy_venue_la",
   "recurring",
-  "movies_tms",
   "do312",
   "dola",
   "chicago_cheap",
