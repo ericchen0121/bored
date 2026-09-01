@@ -11,7 +11,7 @@ import {
 } from "@bored/shared";
 import { cityShareLabel } from "@/lib/city-share";
 import { formatWhen, timeZoneForArea } from "@/lib/datetime";
-import { fetchTopicHubFeed } from "@/lib/server-api";
+import { getTopicHubFeed } from "@/lib/server-api";
 import {
   faqPageJsonLd,
   jsonLdScript,
@@ -30,14 +30,11 @@ import {
 
 type Props = { params: Promise<{ city: string; topic: string }> };
 
+/** On-demand ISR — avoid 30+ slow API calls during Docker build. */
+export const revalidate = 1800;
+
 function parseCity(value: string): FeedCity | null {
   return FEED_CITIES.includes(value as FeedCity) ? (value as FeedCity) : null;
-}
-
-export async function generateStaticParams() {
-  return FEED_CITIES.flatMap((city) =>
-    FEED_TOPICS.map((topic) => ({ city, topic })),
-  );
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -47,7 +44,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!city || !topic) notFound();
 
   const area = topicHubArea(city) as FeedArea;
-  const data = await fetchTopicHubFeed(area, topic);
+  const data = await getTopicHubFeed(area, topic, 1);
   const count = data?.cards?.length ?? 0;
   return topicHubMetadata(city, topic, count);
 }
@@ -60,7 +57,7 @@ export default async function TopicHubPage({ params }: Props) {
 
   const area = topicHubArea(city) as FeedArea;
   const timeZone = timeZoneForArea(area);
-  const data = await fetchTopicHubFeed(area, topic);
+  const data = await getTopicHubFeed(area, topic);
   const cards = data?.cards ?? [];
   const title = topicHubTitle(city, topic);
   const intro = topicHubIntroText(city, topic);

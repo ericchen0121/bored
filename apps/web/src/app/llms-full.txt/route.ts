@@ -8,7 +8,7 @@ import {
 } from "@bored/shared";
 import { cityShareLabel } from "@/lib/city-share";
 import { formatWhen, timeZoneForArea } from "@/lib/datetime";
-import { fetchCityHubFeed, fetchTopicHubFeed } from "@/lib/server-api";
+import { fetchCityHubFeed, getCityHubFeed, getTopicHubFeed } from "@/lib/server-api";
 import {
   cardDetailUrl,
   topicHubArea,
@@ -18,7 +18,7 @@ import {
 } from "@/lib/topic-seo";
 import { siteUrl } from "@/lib/site";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 const SAMPLE_TOPICS = ["concerts", "comedy", "free", "food"] as const satisfies readonly FeedTopic[];
 
@@ -80,8 +80,8 @@ async function buildCitySection(city: FeedCity, base: string): Promise<string[]>
   ];
 
   const [cityFeed, ...topicFeeds] = await Promise.all([
-    fetchCityHubFeed(area, 8),
-    ...SAMPLE_TOPICS.map((topic) => fetchTopicHubFeed(area, topic, 5)),
+    getCityHubFeed(area, 8),
+    ...SAMPLE_TOPICS.map((topic) => getTopicHubFeed(area, topic, 5)),
   ]);
 
   const cards = cityFeed?.cards ?? [];

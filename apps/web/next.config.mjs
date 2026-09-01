@@ -3,6 +3,8 @@ const lanIp = process.env.LAN_IP?.trim();
 
 const nextConfig = {
   transpilePackages: ["@bored/shared"],
+  // Topic hubs + llms-full skip build-time API; sitemap can still take a moment.
+  staticPageGenerationTimeout: 180,
   // Phone-on-Wi‑Fi hits Next via LAN IP; avoid cross-origin /_next/* warnings.
   ...(lanIp ? { allowedDevOrigins: [lanIp] } : {}),
   images: {

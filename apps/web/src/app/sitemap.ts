@@ -4,6 +4,8 @@ import { fetchSitemapEntries } from "@/lib/server-api";
 import { siteUrl } from "@/lib/site";
 import { allTopicHubPaths } from "@/lib/topic-seo";
 
+export const revalidate = 3600;
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
   const now = new Date();
