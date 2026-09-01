@@ -90,6 +90,7 @@ import {
 import {
   getTodayFeedCache,
   setTodayFeedCache,
+  shouldCacheTodayFeed,
   todayFeedCacheKey,
 } from "./feedCache.js";
 import { resolveGeo } from "./geo.js";
@@ -971,7 +972,7 @@ app.get("/v1/feed", async (c) => {
   // Shared Today feeds are cacheable for everyone (auth + anon). Dismissals /
   // prefsSummary are overlaid per request so the cached payload stays shared.
   const todayCacheKey =
-    query.mode === "today"
+    query.mode === "today" && shouldCacheTodayFeed(query.limit)
       ? todayFeedCacheKey({
           area: query.area,
           date: query.date ?? null,
@@ -1046,8 +1047,12 @@ app.get("/v1/feed", async (c) => {
     windowEnd = new Date(now.getTime() + 14 * 86400000);
   }
 
-  const fetchLimit =
+  let fetchLimit =
     query.mode === "date" || dayDate || browsingSources ? 500 : 300;
+  // Today feed: don't load 500 full event rows when the response caps at `limit`.
+  if (query.mode === "today" && dayDate && !browsingSources) {
+    fetchLimit = Math.min(fetchLimit, Math.max(query.limit + 80, 220));
+  }
   const startsInWindow = exclusiveEnd
     ? and(gte(events.startsAt, windowStart), lt(events.startsAt, windowEnd))
     : and(gte(events.startsAt, windowStart), lte(events.startsAt, windowEnd));

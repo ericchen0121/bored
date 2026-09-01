@@ -2,7 +2,7 @@ import type { FeedCard } from "@bored/shared";
 import { api } from "@/lib/api";
 
 /** Match API Today feed cache TTL (feedCache.ts). */
-const CACHE_MS = 45 * 60 * 1000;
+const CACHE_MS = 15 * 60 * 1000;
 const MAX_ENTRIES = 50;
 
 type CacheEntry = { at: number; cards: FeedCard[] };

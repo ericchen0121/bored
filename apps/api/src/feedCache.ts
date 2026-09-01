@@ -1,15 +1,27 @@
 /** In-memory cache for shared Today feeds (all users — personalization is overlaid per request). */
 
-
 type CacheEntry = {
   expiresAt: number;
   body: unknown;
 };
 
 const store = new Map<string, CacheEntry>();
-/** Default 45m — stale live/earlier boundaries are acceptable vs DB cost. */
-export const DEFAULT_TODAY_FEED_CACHE_TTL_MS = 45 * 60 * 1000;
-const MAX_ENTRIES = 200;
+/** Default 15m — long enough to absorb traffic; short enough to limit RSS on small VMs. */
+export const DEFAULT_TODAY_FEED_CACHE_TTL_MS = 15 * 60 * 1000;
+const MAX_ENTRIES = 24;
+/** Map uses limit=500; skip caching large payloads to avoid OOM on Railway. */
+export const TODAY_FEED_CACHE_MAX_LIMIT = 200;
+
+export function shouldCacheTodayFeed(limit: number): boolean {
+  return limit > 0 && limit <= TODAY_FEED_CACHE_MAX_LIMIT;
+}
+
+function purgeExpired(): void {
+  const now = Date.now();
+  for (const [key, entry] of store) {
+    if (now > entry.expiresAt) store.delete(key);
+  }
+}
 
 export function todayFeedCacheTtlMs(): number {
   const raw = process.env.TODAY_FEED_CACHE_TTL_MS?.trim();
@@ -51,6 +63,7 @@ export function setTodayFeedCache(
   body: unknown,
   ttlMs = todayFeedCacheTtlMs(),
 ): void {
+  purgeExpired();
   if (store.size >= MAX_ENTRIES) {
     const oldest = store.keys().next().value;
     if (oldest) store.delete(oldest);

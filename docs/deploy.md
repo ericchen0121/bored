@@ -167,7 +167,7 @@ Bored does **not** run Redis locally or in production. Caching and queues use Po
 
 | Need today | Implementation |
 |---|---|
-| Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **45m** TTL via `TODAY_FEED_CACHE_TTL_MS`, single API process). Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. |
+| Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **15m** TTL via `TODAY_FEED_CACHE_TTL_MS`, max **24** entries, `limit` ≤ 200 only). Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. |
 | Admin ingest queue | Postgres `ingest_jobs`, polled by the ingest worker |
 | Adapter / scrape caches | Postgres columns or per-run in-memory maps |
 
