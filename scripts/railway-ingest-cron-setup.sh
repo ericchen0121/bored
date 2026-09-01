@@ -12,6 +12,7 @@ if ! railway whoami >/dev/null 2>&1; then
 fi
 
 ENV_ID="$(railway status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['environments']['edges'][0]['node']['id'])")"
+export ENV_ID
 
 ensure_service() {
   local name="$1"
@@ -26,11 +27,11 @@ ensure_service ingest-phase1
 ensure_service ingest-movies
 ensure_service ingest-daily
 
-python3 - <<PY
+python3 - <<'PY'
 import json, os, subprocess, urllib.request
 
 token = json.load(open(os.path.expanduser("~/.railway/config.json")))["user"]["token"]
-env_id = "${ENV_ID}"
+env_id = os.environ["ENV_ID"]
 status = json.load(os.popen("railway status --json"))
 name_to_id = {e["node"]["name"]: e["node"]["id"] for e in status["services"]["edges"]}
 
