@@ -8,14 +8,15 @@ import {
   FEED_CITY_LABELS,
   feedFilterSourcesForCity,
   feedModeAllowsDate,
+  filterTodayFeedVisible,
+  isHappyHoursHubCard,
   matchesAnyFeedTopic,
+  withHappyHoursHubCard,
   metroFromArea,
   parseFeedSources,
-  parseFeedTopics,
   topicsPresentInCards,
   type FeedCity,
 } from "@bored/shared";
-import { api } from "@/lib/api";
 import {
   trackDetailOpened,
   trackFeedDateChanged,
@@ -35,10 +36,11 @@ import {
   feedCalendarMeta,
   type FeedCalendarMeta,
 } from "@/lib/feed-calendar";
-import { gatheringPhraseForArea } from "@/lib/gathering-phrase";
+import { gatheringPhraseForArea, mapLoadingPhrase } from "@/lib/gathering-phrase";
 import {
   areaFromCityPath,
   feedHomeHref,
+  feedHomeHrefExplicit,
   feedQueryString,
   isFeedCity,
   parseFeedMode,
@@ -46,8 +48,10 @@ import {
   rememberFeedPrefs,
   type FeedArea,
 } from "@/lib/feed-prefs";
+import { fetchFeedCached, peekFeedCache } from "@/lib/feed-cache";
 import { useSourcesViewEnabled } from "@/lib/dev-flags";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useNow } from "@/hooks/useNow";
 
 function selectionFromParams(
   searchParams: URLSearchParams,
@@ -85,7 +89,6 @@ function CityMapPage({ city }: { city: FeedCity }) {
   const initialSources = parseFeedSources(searchParams.get("sources")).filter(
     (s) => feedFilterSourcesForCity(city).includes(s),
   );
-  const initialTopics = parseFeedTopics(searchParams.get("topics"));
   const initialDate =
     initialMode === "today"
       ? todayKey
@@ -96,7 +99,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
   const [mode, setMode] = useState<FeedMode>(initialMode);
   const [area, setArea] = useState<FeedArea>(initialArea);
   const [sources, setSources] = useState<FeedFilterSource[]>(initialSources);
-  const [topics, setTopics] = useState<FeedTopic[]>(initialTopics);
+  const [topics, setTopics] = useState<FeedTopic[]>([]);
   const [date, setDate] = useState<string | null>(initialDate);
   const [cards, setCards] = useState<FeedCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,6 +117,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
   );
   const isDesktop = useMediaQuery("(min-width: 900px)");
   const sourcesViewEnabled = useSourcesViewEnabled();
+  const now = useNow();
 
   const timeZone = timeZoneForArea(area);
   const selection = useMemo(
@@ -148,7 +152,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
         nextArea,
         nextSources,
         resolvedDate,
-        nextTopics,
+        readFeedPrefs()?.topics ?? [],
       );
       const pathCity = metroFromArea(nextArea);
       const q = feedQueryString({
@@ -188,13 +192,13 @@ function CityMapPage({ city }: { city: FeedCity }) {
         : stored.area === "sf" || stored.area === "bay"
           ? stored.area
           : areaFromCityPath(city, null);
-      // Map always opens on Today; keep area / topics from prefs.
+      // Map always opens on Today; keep area/sources from prefs, not feed topics.
       setMode("today");
       setArea(nextArea);
       if (sourcesViewEnabled) {
         setSources(stored.sources);
       }
-      setTopics(stored.topics);
+      setTopics([]);
       setDate(today);
       syncUrl(
         "today",
@@ -202,7 +206,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
         sourcesViewEnabled ? stored.sources : sources,
         today,
         selectionFromParams(searchParams),
-        stored.topics,
+        [],
       );
     } else {
       syncUrl(
@@ -221,18 +225,23 @@ function CityMapPage({ city }: { city: FeedCity }) {
   useEffect(() => {
     if (!prefsHydrated) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     const params = new URLSearchParams({
       mode,
       area,
       limit: "500",
     });
     if (sources.length) params.set("sources", sources.join(","));
+    if (topics.length) params.set("topics", topics.join(","));
     const effectiveDate =
       mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
     if (effectiveDate) params.set("date", effectiveDate);
-    void api<{ cards: FeedCard[] }>(`/v1/feed?${params.toString()}`)
+
+    const cached = peekFeedCache(params);
+    if (cached) setCards(cached);
+    setLoading(true);
+    setError(null);
+
+    void fetchFeedCached(params)
       .then((data) => {
         if (cancelled) return;
         setCards(data.cards);
@@ -246,7 +255,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
     return () => {
       cancelled = true;
     };
-  }, [prefsHydrated, mode, area, sources, date, timeZone]);
+  }, [prefsHydrated, mode, area, sources, topics, date, timeZone]);
 
   // Calendar dots for the date picker (overview horizon).
   useEffect(() => {
@@ -258,7 +267,7 @@ function CityMapPage({ city }: { city: FeedCity }) {
       limit: "500",
     });
     if (sources.length) params.set("sources", sources.join(","));
-    void api<{ cards: FeedCard[] }>(`/v1/feed?${params.toString()}`)
+    void fetchFeedCached(params)
       .then((data) => {
         if (cancelled) return;
         setCalendarMeta(feedCalendarMeta(data.cards, timeZone));
@@ -282,16 +291,40 @@ function CityMapPage({ city }: { city: FeedCity }) {
     setSelectedClusterId(null);
   }, [mode, date]);
 
+  const isBrowsingToday = useMemo(() => {
+    const today = dayKey(now, timeZone);
+    const effectiveDate = date ?? today;
+    return mode === "today" && effectiveDate === today;
+  }, [mode, date, timeZone, now]);
+
+  const dateFilteredCards = useMemo(() => {
+    if (!isBrowsingToday) return cards;
+    return filterTodayFeedVisible(cards, now);
+  }, [cards, isBrowsingToday, now]);
+
+  const hubbedCards = useMemo(
+    () =>
+      withHappyHoursHubCard(dateFilteredCards, {
+        city,
+        now,
+        timeZone,
+        mode,
+        topics,
+        browsingToday: isBrowsingToday,
+      }),
+    [dateFilteredCards, city, now, timeZone, mode, topics, isBrowsingToday],
+  );
+
   const topicFilteredCards = useMemo(() => {
-    if (!topics.length) return cards;
-    return cards.filter((c) => matchesAnyFeedTopic(topics, c));
-  }, [cards, topics]);
+    if (!topics.length) return hubbedCards;
+    return hubbedCards.filter((c) => matchesAnyFeedTopic(topics, c));
+  }, [hubbedCards, topics]);
 
   const presentTopics = useMemo(() => {
-    const present = topicsPresentInCards(cards);
+    const present = topicsPresentInCards(hubbedCards);
     const extra = topics.filter((t) => !present.includes(t));
     return extra.length ? [...present, ...extra] : present;
-  }, [cards, topics]);
+  }, [hubbedCards, topics]);
 
   const visibleCards = useMemo(() => {
     if (!mapFilterIds) return topicFilteredCards;
@@ -325,6 +358,15 @@ function CityMapPage({ city }: { city: FeedCity }) {
 
   const openDetail = useCallback(
     (card: FeedCard) => {
+      if (isHappyHoursHubCard(card)) {
+        const next: FeedTopic[] = ["happy_hours"];
+        setTopics(next);
+        setMapFilterIds(null);
+        setSelectedClusterId(null);
+        trackFeedTopicChanged({ topics: next, city, surface: "map" });
+        syncUrl(mode, area, sources, date, selection, next);
+        return;
+      }
       if (!isDesktop) setSheetOpen(true);
       const next = selectionFromCard(card);
       trackDetailOpened({
@@ -424,8 +466,26 @@ function CityMapPage({ city }: { city: FeedCity }) {
     [cards, openDetail, syncUrl, mode, area, sources, date, isDesktop],
   );
 
-  const feedHref = feedHomeHref(mode, area, sources, date, topics);
+  const feedHrefStable = useMemo(
+    () =>
+      feedHomeHrefExplicit({
+        mode,
+        area,
+        sources,
+        topics: [],
+        date: feedModeAllowsDate(mode) ? date : null,
+      }),
+    [mode, area, sources, date],
+  );
+  const [feedHref, setFeedHref] = useState(feedHrefStable);
+
+  useEffect(() => {
+    setFeedHref(feedHomeHref(mode, area, sources, date));
+  }, [mode, area, sources, date]);
+
   const cityLabel = FEED_CITY_LABELS[city];
+  const isRefreshing = loading && cards.length > 0;
+  const showMapLoading = loading && cards.length === 0;
 
   return (
     <div className="map-layout">
@@ -483,20 +543,35 @@ function CityMapPage({ city }: { city: FeedCity }) {
               onClear={clearTopics}
             />
           </div>
+          {(showMapLoading || isRefreshing) && (
+            <p
+              className="feed-refresh-status map-loading-status"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="feed-refresh-status__spinner" aria-hidden />
+              {mapLoadingPhrase(area, cityLabel)}
+            </p>
+          )}
           {error && (
             <p className="map-pane map-pane--missing-token muted">
               Can&apos;t reach API ({error}).
             </p>
           )}
           {!error && (
-            <MapEventsMap
-              city={city}
-              cards={mapCards}
-              selectedId={selection?.kind === "event" ? selection.id : null}
-              selectedClusterId={selectedClusterId}
-              onClusterFilter={onClusterFilter}
-              onSelectEvent={onSelectPin}
-            />
+            <div
+              className={`map-pane${isRefreshing ? " map-pane--refreshing" : ""}`}
+              aria-busy={isRefreshing}
+            >
+              <MapEventsMap
+                city={city}
+                cards={mapCards}
+                selectedId={selection?.kind === "event" ? selection.id : null}
+                selectedClusterId={selectedClusterId}
+                onClusterFilter={onClusterFilter}
+                onSelectEvent={onSelectPin}
+              />
+            </div>
           )}
         </div>
       </div>

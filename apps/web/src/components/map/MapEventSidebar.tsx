@@ -14,6 +14,7 @@ import {
   eventScanTagsForDisplay,
   isExhibitionTag,
   isFeedEventLive,
+  isHappyHoursHubCard,
   isTimeTbaTag,
   primaryEventType,
   registrationStatusLabel,
@@ -257,6 +258,7 @@ function MapSidebarList({
           </h2>
           <ul className="map-sidebar__events">
             {group.cards.map((card) => {
+              const isHappyHoursHub = isHappyHoursHubCard(card);
               const live = isFeedEventLive(card.startsAt, card.endsAt, now, {
                 tags: card.tags,
               });
@@ -292,7 +294,7 @@ function MapSidebarList({
                     type="button"
                     className={`map-sidebar__event ${
                       selectedId === card.id ? "is-selected" : ""
-                    }`}
+                    }${isHappyHoursHub ? " map-sidebar__event--hh-hub" : ""}`}
                     onClick={() => onSelect(card)}
                   >
                     <TimelineThumbMedia
@@ -301,7 +303,9 @@ function MapSidebarList({
                     />
                     <div className="map-sidebar__event-body">
                       <div className="map-sidebar__event-meta">
-                        {live ? (
+                        {isHappyHoursHub ? (
+                          <LiveNowBadge />
+                        ) : live ? (
                           <LiveNowBadge />
                         ) : isTimeTba ? (
                           <span>{tbaWhen}</span>
@@ -314,11 +318,15 @@ function MapSidebarList({
                       <span className="map-sidebar__event-title">
                         {card.title}
                       </span>
-                      {(place || card.isFree) && (
+                      {(isHappyHoursHub
+                        ? card.subtitle
+                        : place || card.isFree) && (
                         <span className="map-sidebar__event-place">
-                          {place}
-                          {place && card.isFree ? " · " : ""}
-                          {card.isFree ? "Free" : ""}
+                          {isHappyHoursHub
+                            ? card.subtitle
+                            : `${place}${place && card.isFree ? " · " : ""}${
+                                card.isFree ? "Free" : ""
+                              }`}
                         </span>
                       )}
                       {(tags.length > 0 || showReg) && (

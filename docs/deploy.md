@@ -11,7 +11,7 @@ How to run Bored in production: **Postgres**, **API**, **web**, and **ingest** (
 | **web** | Next.js | `web` | Needs `NEXT_PUBLIC_API_URL` at **build** time |
 | **ingest** | Cron scrapers | `ingest` | Schedules in `packages/ingest/src/schedules.ts`; Playwright optional |
 
-Local Docker Compose (`docker-compose.yml`) is **dev only** (Postgres + unused Redis stub). Production DB is the Railway Postgres plugin.
+Local Docker Compose (`docker-compose.yml`) is **dev only** (Postgres). Production DB is the Railway Postgres plugin.
 
 ## Prerequisites
 
@@ -160,6 +160,26 @@ Data-model cleanup (durable schedules, GC, coalesce) is tracked in [productioniz
 | CORS errors | Set `WEB_ORIGIN` on api to the exact web origin |
 | Empty feed | Run Phase 1 ingest; confirm ingest logs + `ingest_runs` table |
 | Flyer scrape OOM | Set `BROWSER_IMAGE_SCRAPE=0` or raise ingest memory; cap concurrency |
+
+## Future: Redis (not in stack today)
+
+Bored does **not** run Redis locally or in production. Caching and queues use Postgres and in-process memory instead:
+
+| Need today | Implementation |
+|---|---|
+| Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **45m** TTL via `TODAY_FEED_CACHE_TTL_MS`, single API process). Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. |
+| Admin ingest queue | Postgres `ingest_jobs`, polled by the ingest worker |
+| Adapter / scrape caches | Postgres columns or per-run in-memory maps |
+
+Add Redis (e.g. Railway plugin + `REDIS_URL`) when one of these becomes a bottleneck:
+
+1. **Shared feed cache** — multiple API replicas need the same Today-feed responses without each cold-hitting Postgres.
+2. **Distributed rate limiting** — per-IP or per-key throttles on public `/v1/*` endpoints.
+3. **Ingest coordination** — cross-worker locks, dedupe, or a BullMQ-style job queue if Postgres polling is too slow or ingest is scaled horizontally.
+4. **Real-time ops** — pub/sub for admin job progress or live status without polling.
+5. **Session store** — fast revocation / TTL for auth tokens if magic-link usage grows beyond simple DB lookups.
+
+Until then, skip Redis to keep local and production infra minimal.
 
 ## Related
 

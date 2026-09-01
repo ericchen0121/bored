@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import {
@@ -12,7 +11,6 @@ import {
   parseFeedSources,
   parseFeedTopics,
 } from "@bored/shared";
-import { useUser } from "@/components/UserProvider";
 import { detectFeedArea } from "@/lib/detect-city";
 import {
   areaFromCityPath,
@@ -27,13 +25,12 @@ import { parseFeedDate } from "@/lib/datetime";
 
 /**
  * Legacy `/` and cold-start entry: resolve city from query / prefs / geo,
- * then replace with `/{city}?…`. Defaults to Today; For you when signed in
- * with tastes.
+ * then replace with `/{city}?…`. Always lands on Today for a fast first paint;
+ * For you is opt-in via mode switch or explicit `?mode=for_you`.
  */
 function RootRedirectInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { ready, authenticated, onboardingComplete } = useUser();
 
   useEffect(() => {
     let cancelled = false;
@@ -83,15 +80,24 @@ function RootRedirectInner() {
 
       const stored = readFeedPrefs();
       if (stored) {
-        if (!cancelled) router.replace(feedHomeHref());
+        // Always land on Today; keep area/sources/topics from the last visit.
+        if (!cancelled) {
+          router.replace(
+            feedHomeHref(
+              "today",
+              stored.area,
+              stored.sources,
+              null,
+              stored.topics,
+            ),
+          );
+        }
         return;
       }
 
-      if (!ready) return;
-
       const detected = await detectFeedArea();
       if (cancelled) return;
-      const mode = defaultFeedMode({ authenticated, onboardingComplete });
+      const mode = defaultFeedMode();
       rememberFeedPrefs(mode, detected, [], null, []);
       router.replace(feedHomeHref(mode, detected, [], null, []));
     }
@@ -100,7 +106,7 @@ function RootRedirectInner() {
     return () => {
       cancelled = true;
     };
-  }, [router, searchParams, ready, authenticated, onboardingComplete]);
+  }, [router, searchParams]);
 
   return <p className="muted">Finding your city…</p>;
 }

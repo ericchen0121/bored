@@ -1,4 +1,5 @@
-/** Short-TTL in-memory cache for shared (anonymous) Today feeds. */
+/** In-memory cache for shared Today feeds (all users — personalization is overlaid per request). */
+
 
 type CacheEntry = {
   expiresAt: number;
@@ -6,8 +7,17 @@ type CacheEntry = {
 };
 
 const store = new Map<string, CacheEntry>();
-const DEFAULT_TTL_MS = 90_000;
+/** Default 45m — stale live/earlier boundaries are acceptable vs DB cost. */
+export const DEFAULT_TODAY_FEED_CACHE_TTL_MS = 45 * 60 * 1000;
 const MAX_ENTRIES = 200;
+
+export function todayFeedCacheTtlMs(): number {
+  const raw = process.env.TODAY_FEED_CACHE_TTL_MS?.trim();
+  if (!raw) return DEFAULT_TODAY_FEED_CACHE_TTL_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_TODAY_FEED_CACHE_TTL_MS;
+  return n;
+}
 
 export function todayFeedCacheKey(parts: {
   area: string;
@@ -39,7 +49,7 @@ export function getTodayFeedCache(key: string): unknown | null {
 export function setTodayFeedCache(
   key: string,
   body: unknown,
-  ttlMs = DEFAULT_TTL_MS,
+  ttlMs = todayFeedCacheTtlMs(),
 ): void {
   if (store.size >= MAX_ENTRIES) {
     const oldest = store.keys().next().value;

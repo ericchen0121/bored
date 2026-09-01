@@ -1,5 +1,7 @@
 import * as cheerio from "cheerio";
 import {
+  decodeHtmlEntities,
+  stripHtmlToText,
   unwrapFuncheapLazyImageUrl,
   upgradeFuncheapImageUrl,
 } from "@bored/shared";
@@ -541,7 +543,7 @@ function inferCity(classes: string, title: string): string {
 }
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return stripHtmlToText(html);
 }
 
 /**
@@ -603,17 +605,7 @@ function isFuncheapArticleParagraph(text: string): boolean {
 }
 
 function decodeEntities(s: string): string {
-  return s
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) =>
-      String.fromCharCode(parseInt(n, 16)),
-    )
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ");
+  return decodeHtmlEntities(s);
 }
 
 function extractDateFromTitle(title: string): Date | null {

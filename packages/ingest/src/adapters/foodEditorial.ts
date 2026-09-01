@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { decodeHtmlEntities } from "@bored/shared";
 import { enrichInfatuationEvent } from "./food.js";
 import { fetchGooglePlacePhoto } from "./googlePlacePhoto.js";
 import { fetchText, type NormalizedEvent } from "../types.js";
@@ -549,13 +550,7 @@ function cleanAuthor(
 }
 
 function decodeHtml(text: string): string {
-  return text
-    .replace(/&#x27;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  return decodeHtmlEntities(text);
 }
 
 function parseIso(value: unknown): Date | null {

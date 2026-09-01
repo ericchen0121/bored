@@ -7,13 +7,13 @@ import {
   eventScanTagsForDisplay,
   foodTipFallbackLabel,
   isActivityRecommendationSource,
-  isEarlierEvent,
   isExhibitionTag,
   isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
   isNewRestaurantRecommendationSource,
   isTimeTbaTag,
+  isTodayFeedVisible,
   newRestaurantTipFallbackLabel,
   registrationStatusLabel,
 } from "@bored/shared";
@@ -233,16 +233,8 @@ function partitionTimedCards(cards: FeedCard[], now: Date) {
   const earlier: FeedCard[] = [];
   const current: FeedCard[] = [];
   for (const card of cards) {
-    if (isExhibitionTag(card.tags) || isTimeTbaTag(card.tags)) {
-      if (card.endsAt && new Date(card.endsAt).getTime() < now.getTime()) {
-        earlier.push(card);
-      } else {
-        current.push(card);
-      }
-      continue;
-    }
-    if (isEarlierEvent(card.startsAt, card.endsAt, now)) earlier.push(card);
-    else current.push(card);
+    if (isTodayFeedVisible(card, now)) current.push(card);
+    else earlier.push(card);
   }
   return { earlier, current };
 }

@@ -1160,12 +1160,15 @@ export function normalizeFeedMode(
     : "today";
 }
 
-/** Cold-start / no-URL default: For you only when tastes exist. */
-export function defaultFeedMode(opts?: {
+/**
+ * Cold-start / no-URL default: always Today (shared, cacheable).
+ * For you is opt-in via mode switch or explicit `?mode=for_you`.
+ */
+export function defaultFeedMode(_opts?: {
   authenticated?: boolean;
   onboardingComplete?: boolean;
 }): FeedMode {
-  return opts?.authenticated && opts?.onboardingComplete ? "for_you" : "today";
+  return "today";
 }
 
 /** Modes that may carry an optional `date=YYYY-MM-DD` filter. */

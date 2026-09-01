@@ -143,7 +143,10 @@ export function eventContentHash(ev: NormalizedEvent): string {
 /** True when copy advertises free admission (not "free skiing", "free agents", etc.). */
 export function mentionsFreeAdmission(text: string | null | undefined): boolean {
   if (!text?.trim()) return false;
-  const lower = text.toLowerCase();
+  // Newsletter / Substack CTAs are not event admission.
+  const lower = text
+    .toLowerCase()
+    .replace(/\b(?:sign\s+up|subscribe|signup)\s+for\s+free\b/g, " ");
   if (
     /\bfree\s+(?:skiers?|skiing|boarders?|boarding|style|weights?|throw|agents?|will|dom|range)\b/.test(
       lower,

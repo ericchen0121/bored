@@ -12,6 +12,7 @@ import {
   isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
+  isHappyHoursHubCard,
   isInstagramVideo,
   isNewRestaurantRecommendationSource,
   isTimeTbaTag,
@@ -76,6 +77,7 @@ export function FeedCardView({
   const isActivityTip = isActivityRecommendationSource(card.source ?? "");
   const isEvergreenTip = isFoodTip || isActivityTip || isNewRestaurant;
   const isFoodDeal = isFoodDealSource(card.source);
+  const isHappyHoursHub = isHappyHoursHubCard(card);
   const isIgReel = isInstagramVideo({ source: card.source, tags: card.tags });
   const tipLabel = isNewRestaurant
     ? newRestaurantTipFallbackLabel(card.recommendationLabel)
@@ -125,6 +127,7 @@ export function FeedCardView({
     interactive ? "is-interactive" : "",
     size === "large" ? "card--large" : "",
     size === "poster" ? "card--poster" : "",
+    isHappyHoursHub ? "card--happy-hours-hub" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -234,6 +237,11 @@ export function FeedCardView({
               {tbaWhen ? ` · ${tbaWhen}` : ""}
               {card.venueName ? ` · ${card.venueName}` : ""}
               {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+            </>
+          ) : isHappyHoursHub ? (
+            <>
+              <LiveNowBadge />
+              {card.recommendationLabel ?? "Happening now"}
             </>
           ) : isFoodDeal ? (
             <>

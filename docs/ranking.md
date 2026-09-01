@@ -91,7 +91,7 @@ Stored on `user_profiles`:
 - `preferFree`, `nightsOut`
 - `lat` / `lng` / `radiusMiles`
 
-After onboarding save, clients should load `/?mode=for_you` so ranking uses the new profile.
+After onboarding save, clients should load `/?mode=for_you` so ranking uses the new profile. Cold start and `/{city}` without `?mode=` always land on **Today** (shared/cacheable); For you is opt-in via the mode switch or that explicit URL.
 
 ## Hard filters (feed query)
 

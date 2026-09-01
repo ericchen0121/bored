@@ -5,6 +5,8 @@ import {
   FOOD_METRO_CONFIGS,
   FOUND_NON_FOOD_SECTIONS,
   suggestionStartsAt,
+  decodeHtmlEntities,
+  stripHtmlToText,
   type FoodMetroConfig,
   cityKeyFromLabel,
 } from "@bored/shared";
@@ -1018,19 +1020,13 @@ function parseDate(raw: unknown): Date | null {
 }
 
 function strip(html: string) {
-  return html
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return stripHtmlToText(html);
 }
 
 function firstImgSrc(html: string): string | null {
   const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
   if (!m?.[1]) return null;
-  return m[1].replace(/&amp;/g, "&");
+  return decodeHtmlEntities(m[1]);
 }
 
 function slugTag(s: string): string {

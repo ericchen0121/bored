@@ -8,6 +8,7 @@ import Map, {
   type MapMouseEvent,
   type MapRef,
 } from "react-map-gl/mapbox";
+import { MapSelectedEventMarker } from "./MapSelectedEventMarker";
 import type { FeedCard, FeedCity } from "@bored/shared";
 import { CHI_DEFAULT, LA_DEFAULT, SF_DEFAULT } from "@bored/shared";
 import type { GeoJSONSource, Map as MapboxMap } from "mapbox-gl";
@@ -39,12 +40,15 @@ const CITY_VIEW: Record<
 const CLUSTER_COLOR = "#e8a54b";
 const CLUSTER_COLOR_ACTIVE = "#ffc15e";
 const PIN_COLOR = "#e8a54b";
-const PIN_COLOR_ACTIVE = "#ffc15e";
 const CLUSTER_TEXT = "#1a1208";
 
 const CLUSTER_LAYER = "bored-clusters";
 const CLUSTER_COUNT_LAYER = "bored-cluster-count";
 const UNCLUSTERED_LAYER = "bored-unclustered";
+
+/** Zoom past clusterMaxZoom (14) so the selected venue unclusters. */
+const FOCUS_ZOOM = 15.5;
+const FOCUS_MAX_ZOOM = 16;
 
 type Props = {
   city: FeedCity;
@@ -78,6 +82,17 @@ function featurePoint(f: MapFeature): { lng: number; lat: number } | null {
   return { lng, lat };
 }
 
+/** Layers may not exist until Source/Layer children mount after map load. */
+function queryExistingLayers(
+  map: MapboxMap,
+  point: MapMouseEvent["point"],
+  layerIds: string[],
+): MapFeature[] {
+  const layers = layerIds.filter((id) => map.getLayer(id));
+  if (!layers.length) return [];
+  return map.queryRenderedFeatures(point, { layers }) as MapFeature[];
+}
+
 function cardsToGeoJSON(cards: FeedCard[]) {
   return {
     type: "FeatureCollection" as const,
@@ -103,6 +118,58 @@ function cardsToGeoJSON(cards: FeedCard[]) {
   };
 }
 
+function getClusterExpansionZoom(
+  source: GeoJSONSource,
+  clusterId: number,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+      if (err) reject(err);
+      else resolve(typeof zoom === "number" ? zoom : FOCUS_ZOOM);
+    });
+  });
+}
+
+async function focusMapOnSelectedEvent(
+  map: MapboxMap,
+  lng: number,
+  lat: number,
+): Promise<void> {
+  const source = map.getSource("bored-events") as GeoJSONSource | undefined;
+
+  const expandClusterIfNeeded = async () => {
+    const px = map.project([lng, lat]);
+    const clusters = queryExistingLayers(map, px, [CLUSTER_LAYER]);
+    const clusterId = clusters[0] ? featureClusterId(clusters[0]) : null;
+    if (clusterId == null || !source) return;
+
+    try {
+      const expansionZoom = await getClusterExpansionZoom(source, clusterId);
+      const nextZoom = Math.min(Math.max(expansionZoom + 0.75, FOCUS_ZOOM), FOCUS_MAX_ZOOM);
+      if (nextZoom > map.getZoom() + 0.05) {
+        map.easeTo({
+          center: [lng, lat],
+          zoom: nextZoom,
+          duration: 350,
+        });
+      }
+    } catch {
+      /* best effort */
+    }
+  };
+
+  map.easeTo({
+    center: [lng, lat],
+    zoom: Math.max(map.getZoom(), FOCUS_ZOOM),
+    duration: 500,
+  });
+
+  await new Promise<void>((resolve) => {
+    map.once("moveend", () => resolve());
+  });
+  await expandClusterIfNeeded();
+}
+
 function getClusterLeaves(
   source: GeoJSONSource,
   clusterId: number,
@@ -125,8 +192,14 @@ export function MapEventsMap({
 }: Props) {
   const mapRef = useRef<MapRef>(null);
   const paneRef = useRef<HTMLDivElement>(null);
+  const lastFocusIdRef = useRef<string | null>(null);
   const geojson = useMemo(() => cardsToGeoJSON(cards), [cards]);
   const initialView = CITY_VIEW[city];
+
+  const selectedCard = useMemo(
+    () => (selectedId ? cards.find((c) => c.id === selectedId) : null),
+    [cards, selectedId],
+  );
 
   const resizeMap = useCallback(() => {
     const map = mapRef.current?.getMap();
@@ -192,23 +265,56 @@ export function MapEventsMap({
     }
   }, [selectedClusterId]);
 
+  // Pan/zoom to the selected pin when picking from the sidebar (neighborhood scale).
+  useEffect(() => {
+    if (!selectedId) {
+      lastFocusIdRef.current = null;
+      return;
+    }
+    if (lastFocusIdRef.current === selectedId) return;
+
+    const lat = selectedCard?.lat;
+    const lng = selectedCard?.lng;
+    if (
+      typeof lat !== "number" ||
+      typeof lng !== "number" ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    ) {
+      return;
+    }
+
+    const focus = () => {
+      const map = mapRef.current?.getMap();
+      if (!map) return;
+      if (lastFocusIdRef.current === selectedId) return;
+      lastFocusIdRef.current = selectedId;
+      void focusMapOnSelectedEvent(map, lng, lat);
+    };
+
+    focus();
+    const map = mapRef.current?.getMap();
+    if (map && !map.loaded()) {
+      map.once("load", focus);
+      return () => {
+        map.off("load", focus);
+      };
+    }
+  }, [selectedId, selectedCard]);
+
   const onClick = useCallback(
     async (e: MapMouseEvent) => {
       const map = mapRef.current?.getMap() as MapboxMap | undefined;
       if (!map) return;
 
-      const unclustered = map.queryRenderedFeatures(e.point, {
-        layers: [UNCLUSTERED_LAYER],
-      }) as MapFeature[];
+      const unclustered = queryExistingLayers(map, e.point, [UNCLUSTERED_LAYER]);
       const pinId = unclustered[0] ? featureId(unclustered[0]) : null;
       if (pinId) {
         onSelectEvent(pinId);
         return;
       }
 
-      const clusters = map.queryRenderedFeatures(e.point, {
-        layers: [CLUSTER_LAYER],
-      }) as MapFeature[];
+      const clusters = queryExistingLayers(map, e.point, [CLUSTER_LAYER]);
       const cluster = clusters[0];
       if (!cluster) return;
 
@@ -232,11 +338,12 @@ export function MapEventsMap({
   );
 
   const onMouseEnter = useCallback((e: MapMouseEvent) => {
-    const map = mapRef.current?.getMap();
+    const map = mapRef.current?.getMap() as MapboxMap | undefined;
     if (!map) return;
-    const hit = map.queryRenderedFeatures(e.point, {
-      layers: [CLUSTER_LAYER, UNCLUSTERED_LAYER],
-    });
+    const hit = queryExistingLayers(map, e.point, [
+      CLUSTER_LAYER,
+      UNCLUSTERED_LAYER,
+    ]);
     map.getCanvas().style.cursor = hit.length ? "pointer" : "";
   }, []);
 
@@ -330,25 +437,20 @@ export function MapEventsMap({
           <Layer
             id={UNCLUSTERED_LAYER}
             type="circle"
-            filter={["!", ["has", "point_count"]]}
+            filter={[
+              "all",
+              ["!", ["has", "point_count"]],
+              ["!=", ["get", "id"], selectedId ?? ""],
+            ]}
             paint={{
-              "circle-color": [
-                "case",
-                ["==", ["get", "id"], selectedId ?? ""],
-                PIN_COLOR_ACTIVE,
-                PIN_COLOR,
-              ],
-              "circle-radius": [
-                "case",
-                ["==", ["get", "id"], selectedId ?? ""],
-                9,
-                7,
-              ],
+              "circle-color": PIN_COLOR,
+              "circle-radius": 7,
               "circle-stroke-width": 2,
               "circle-stroke-color": "rgba(12, 14, 18, 0.9)",
             }}
           />
         </Source>
+        {selectedCard ? <MapSelectedEventMarker card={selectedCard} /> : null}
       </Map>
     </div>
   );

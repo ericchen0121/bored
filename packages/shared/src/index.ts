@@ -1,3 +1,4 @@
+export * from "./htmlText";
 export * from "./taxonomy";
 export * from "./budget";
 export * from "./schemas";
@@ -18,6 +19,8 @@ export * from "./newRestaurants";
 export * from "./newRestaurantTips";
 export * from "./recurringSchedule";
 export * from "./exhibitions";
+export * from "./feedVisibility";
+export * from "./happyHoursHub";
 export * from "./eventHours";
 export * from "./lineup";
 export * from "./sportsTeams";

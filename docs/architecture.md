@@ -231,7 +231,7 @@ Home is one composition per metro, not a source dashboard:
 
 - **City:** San Francisco | Chicago
 - **Area:** All SF | All Bay Area | Chicago
-- **Mode:** For you | Today | Weekend | Select Date
+- **Mode:** For you | Today | Weekend | Select Date — default landing is **Today**; For you is opt-in (mode switch / `?mode=for_you`)
 - **Day strip:** under Weekend (Fri–Sat–Sun highlighted) and Select Date (All days + calendar); selecting a day passes `?date=YYYY-MM-DD`
 - **Today:** full local calendar day; live + upcoming first; subtle “View N earlier” expands finished events; **Now** badge while an event is in progress
 - **By time:** layout icon (chrono day-grouped list), not a mode chip

@@ -169,6 +169,13 @@ export function feedQueryString(prefs: FeedPrefs): string {
   return params.toString();
 }
 
+/** Build feed home path from explicit prefs only (SSR-safe — no sessionStorage). */
+export function feedHomeHrefExplicit(prefs: FeedPrefs): string {
+  const city = metroFromArea(prefs.area);
+  const q = feedQueryString(prefs);
+  return q ? `/${city}?${q}` : `/${city}`;
+}
+
 export function feedHomeHref(
   mode?: FeedMode,
   area?: FeedArea,
@@ -184,25 +191,22 @@ export function feedHomeHref(
     topics: topics ?? stored?.topics ?? [],
     date: date !== undefined ? date : (stored?.date ?? null),
   };
-  const city = metroFromArea(prefs.area);
-  const q = feedQueryString(prefs);
-  return q ? `/${city}?${q}` : `/${city}`;
+  return feedHomeHrefExplicit(prefs);
 }
 
-/** Map view for a city — same query prefs as the feed. */
+/** Map view — area/mode/date/sources only; topics stay on the feed (map filters client-side). */
 export function feedMapHref(
   mode?: FeedMode,
   area?: FeedArea,
   sources?: FeedFilterSource[],
   date?: string | null,
-  topics?: FeedTopic[],
 ): string {
   const stored = readFeedPrefs();
   const prefs: FeedPrefs = {
     mode: mode ?? stored?.mode ?? "today",
     area: area ?? stored?.area ?? defaultAreaForCity("sf"),
     sources: sources ?? stored?.sources ?? [],
-    topics: topics ?? stored?.topics ?? [],
+    topics: [],
     date: date !== undefined ? date : (stored?.date ?? null),
   };
   const city = metroFromArea(prefs.area);

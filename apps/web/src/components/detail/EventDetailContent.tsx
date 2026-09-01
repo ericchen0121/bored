@@ -7,6 +7,7 @@ import {
   eventDetailImageUrl,
   eventHeroImageFit,
   eventOccurrencesOnLocalDay,
+  eventScanTagsForDisplay,
   exhibitionScheduleFromPayload,
   exhibitionWhenLabel,
   foodDealRecommendationLabel,
@@ -38,6 +39,7 @@ import {
   resolveEventOutboundDestinations,
   resolveSportsTeamRows,
   stripInfatuationRatingTitle,
+  decodeHtmlEntities,
 } from "@bored/shared";
 import { artistListenLinks } from "@/lib/artist-listen";
 import { formatDayOnly } from "@/lib/datetime";
@@ -45,11 +47,6 @@ import { cardEventType, posterPlaceholderLabel } from "@/lib/evergreen-poster";
 import { DetailHeroMedia } from "@/components/EventPosterMedia";
 import { LiveNowBadge } from "@/components/LiveNowBadge";
 import { useNow } from "@/hooks/useNow";
-import {
-  eventHasLocation,
-  googleMapsEmbedSrc,
-  googleMapsLink,
-} from "@/lib/event-location";
 import { eventOutboundHref } from "@/lib/outbound";
 import { trackCtaClicked } from "@/lib/analytics";
 import { SaveButton } from "@/components/SaveButton";
@@ -57,6 +54,7 @@ import { usePathname } from "next/navigation";
 import { ListenPlatformIcon } from "./ListenPlatformIcon";
 import { InstagramReelEmbed } from "./InstagramReelEmbed";
 import { EventWeatherInline } from "./EventWeatherInline";
+import { EventDetailLocation } from "./EventDetailLocation";
 import type { EventDetail } from "./types";
 
 function formatDetailPrice(event: EventDetail): string {
@@ -146,7 +144,12 @@ export function EventDetailContent({
   });
   const showOccurrenceTimes = occurrenceTimes.length > 1;
 
-  const genreChips = genreTagsForDisplay(event.tags, compact ? 6 : 8);
+  const scanTags = eventScanTagsForDisplay(
+    event.categories,
+    event.tags,
+    compact ? 8 : 12,
+  );
+  const genreChips = genreTagsForDisplay(event.tags, compact ? 8 : 12);
   const sports = isSportsListing({
     categories: event.categories,
     tags: event.tags,
@@ -288,12 +291,15 @@ export function EventDetailContent({
   );
   const hasEditorialReview =
     isFoodTip || (isFoodDeal && (showEditorByline || editorialOutlet));
-  const descriptionForDisplay =
-    hasEditorialReview && event.description
-      ? stripTrailingByline(stripLeadingHeadline(event.description, headline))
-      : event.description
-        ? stripLeadingHeadline(event.description, headline)
-        : event.description;
+  const descriptionForDisplay = (() => {
+    const raw =
+      hasEditorialReview && event.description
+        ? stripTrailingByline(stripLeadingHeadline(event.description, headline))
+        : event.description
+          ? stripLeadingHeadline(event.description, headline)
+          : event.description;
+    return raw ? decodeHtmlEntities(raw) : raw;
+  })();
   const foodMeta =
     isFoodTip || isFoodDeal
       ? [...cuisines, priceLine !== "Price TBA" ? priceLine : null].filter(
@@ -353,11 +359,13 @@ export function EventDetailContent({
     event.rawPayload.rating > 0
       ? event.rawPayload.rating
       : null;
-  const displayTitle = isFoodTip
-    ? event.source === "food"
-      ? stripInfatuationRatingTitle(event.title, infatuationRating)
-      : event.title
-    : event.title;
+  const displayTitle = decodeHtmlEntities(
+    isFoodTip
+      ? event.source === "food"
+        ? stripInfatuationRatingTitle(event.title, infatuationRating)
+        : event.title
+      : event.title,
+  );
   const showInstagramReel =
     isInstagramVideo({
       source: event.source,
@@ -381,13 +389,29 @@ export function EventDetailContent({
       source: event.source,
       rawPayload: event.rawPayload,
     }) ?? undefined;
-  const hasLocation = eventHasLocation(event);
-  const mapsEmbedSrc = hasLocation ? googleMapsEmbedSrc(event) : null;
-  const mapsLink = hasLocation ? googleMapsLink(event) : null;
   const showSponsored = isSponsoredActive({
     isSponsored: event.isSponsored,
     sponsorEndsAt: event.sponsorEndsAt,
   });
+
+  const whenBlock = isEvergreenTip ? null : showOccurrenceTimes ? (
+    <div className="lede detail-body__when">
+      <p>{formatDayOnly(event.startsAt, tz)}</p>
+      <div className="times">
+        {occurrenceTimes.map((o) => (
+          <span key={o.startsAt} className="time">
+            {new Date(o.startsAt).toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              timeZone: tz,
+            })}
+          </span>
+        ))}
+      </div>
+    </div>
+  ) : (
+    <p className="lede detail-body__when">{when}</p>
+  );
 
   return (
     <div className={`detail-body ${compact ? "is-compact" : ""}`}>
@@ -437,44 +461,10 @@ export function EventDetailContent({
         {headline ? (
           <>
             <p className="lede detail-body__tagline">{headline}</p>
-            {!isEvergreenTip ? (
-              showOccurrenceTimes ? (
-                <div className="lede detail-body__when">
-                  <p>{formatDayOnly(event.startsAt, tz)}</p>
-                  <div className="times">
-                    {occurrenceTimes.map((o) => (
-                      <span key={o.startsAt} className="time">
-                        {new Date(o.startsAt).toLocaleTimeString("en-US", {
-                          hour: "numeric",
-                          minute: "2-digit",
-                          timeZone: tz,
-                        })}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="lede detail-body__when">{when}</p>
-              )
-            ) : null}
+            {whenBlock}
           </>
-        ) : isEvergreenTip ? null : showOccurrenceTimes ? (
-          <div className="lede detail-body__when">
-            <p>{formatDayOnly(event.startsAt, tz)}</p>
-            <div className="times">
-              {occurrenceTimes.map((o) => (
-                <span key={o.startsAt} className="time">
-                  {new Date(o.startsAt).toLocaleTimeString("en-US", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone: tz,
-                  })}
-                </span>
-              ))}
-            </div>
-          </div>
         ) : (
-          <p className="lede detail-body__when">{when}</p>
+          whenBlock
         )}
         {(isFoodTip || isFoodDeal) && reviewedLabel ? (
           <p className="meta" style={{ marginTop: 6 }}>
@@ -528,66 +518,18 @@ export function EventDetailContent({
         />
       )}
 
-      {!isEvergreenTip ? (
-        <EventWeatherInline
-          startsAt={event.startsAt}
-          endsAt={event.endsAt}
-          timezone={tz}
-          lat={event.lat}
-          lng={event.lng}
-          venueName={event.venueName}
-          title={event.title}
-          address={event.address}
-          city={typeof event.city === "string" ? event.city : null}
-          neighborhood={event.neighborhood}
-          placeLabel={
-            event.neighborhood ||
-            (typeof event.city === "string" ? event.city : null) ||
-            event.venueName
-          }
-        />
-      ) : null}
-
       <div className="panel detail-body__panel">
-        {hasLocation ? (
-          <div className="detail-body__location">
-            {event.venueName ? (
-              <p className="detail-body__venue-name">{event.venueName}</p>
-            ) : null}
-            <div className="detail-body__location-meta">
-              {event.neighborhood ? (
-                <span className="badge neighborhood">{event.neighborhood}</span>
-              ) : null}
-              {event.address ? (
-                <span className="meta detail-body__address">{event.address}</span>
-              ) : null}
-            </div>
-            {mapsEmbedSrc ? (
-              <div className="detail-body__map-frame">
-                <iframe
-                  src={mapsEmbedSrc}
-                  title={
-                    event.venueName
-                      ? `Map of ${event.venueName}`
-                      : "Event location map"
-                  }
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
-                  allowFullScreen
-                />
-              </div>
-            ) : null}
-            {mapsLink ? (
-              <a
-                className="detail-body__map-link"
-                href={mapsLink}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open in Google Maps
-              </a>
-            ) : null}
+        {scanTags.length > 0 ? (
+          <div className="tags detail-body__tags">
+            {scanTags.map((t) => (
+              <span key={t.id} className="badge genre">
+                {t.label}
+              </span>
+            ))}
           </div>
+        ) : null}
+        {descriptionForDisplay && !descLooksLikeTags ? (
+          <p className="detail-body__desc">{descriptionForDisplay}</p>
         ) : null}
         {foodMeta.length > 0 ? (
           <p className="meta" style={{ marginTop: 8 }}>
@@ -631,13 +573,9 @@ export function EventDetailContent({
           </div>
         )}
         {lineup.length > 0 && (
-          <div className="detail-body__lineup" style={{ marginTop: 14 }}>
+          <div className="detail-body__lineup detail-body__lineup--listen">
             <p className="eyebrow" style={{ marginBottom: 6 }}>
               Lineup
-            </p>
-            <p className="meta detail-body__lineup-hint">
-              Listen on Spotify, YouTube Music, or SoundCloud to see if
-              you&apos;re into them.
             </p>
             <ul className="detail-body__lineup-list">
               {lineup.map((name) => (
@@ -663,18 +601,36 @@ export function EventDetailContent({
             </ul>
           </div>
         )}
-        {genreChips.length > 0 && (
-          <div className="tags" style={{ marginTop: 12 }}>
-            {genreChips.map((t) => (
-              <span key={t.id} className="badge genre">
-                {t.label}
-              </span>
-            ))}
-          </div>
-        )}
-        {descriptionForDisplay && !descLooksLikeTags && (
-          <p className="detail-body__desc">{descriptionForDisplay}</p>
-        )}
+
+        {!isEvergreenTip ? (
+          <section
+            className="detail-body__weather-divider"
+            aria-label="Weather during event"
+          >
+            {whenBlock ? (
+              <div className="detail-body__weather-context">{whenBlock}</div>
+            ) : null}
+            <EventWeatherInline
+              startsAt={event.startsAt}
+              endsAt={event.endsAt}
+              timezone={tz}
+              lat={event.lat}
+              lng={event.lng}
+              venueName={event.venueName}
+              title={event.title}
+              address={event.address}
+              city={typeof event.city === "string" ? event.city : null}
+              neighborhood={event.neighborhood}
+              placeLabel={
+                event.neighborhood ||
+                (typeof event.city === "string" ? event.city : null) ||
+                event.venueName
+              }
+            />
+          </section>
+        ) : null}
+
+        <EventDetailLocation event={event} />
         {showEditorByline && (
           <div className="detail-body__byline">
             {authorAvatarUrl ? (

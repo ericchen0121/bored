@@ -23,6 +23,8 @@ import {
   metroFromArea,
   parseFeedSources,
   parseFeedTopics,
+  isHappyHoursHubCard,
+  withHappyHoursHubCard,
   type FeedCity,
 } from "@bored/shared";
 import { api } from "@/lib/api";
@@ -56,6 +58,7 @@ import {
   feedCalendarMeta,
   type FeedCalendarMeta,
 } from "@/lib/feed-calendar";
+import { fetchFeedCached, peekFeedCache } from "@/lib/feed-cache";
 import {
   feedRefreshPhrase,
   gatheringPhraseForArea,
@@ -75,6 +78,7 @@ import {
   topicHubHref,
 } from "@/lib/feed-prefs";
 import { useSourcesViewEnabled } from "@/lib/dev-flags";
+import { useNow } from "@/hooks/useNow";
 
 const MODE_LABELS: Record<FeedMode, string> = {
   for_you: "For you",
@@ -154,6 +158,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const [prefsHydrated, setPrefsHydrated] = useState(() =>
     searchParams.has("mode"),
   );
+  const lastFeedRefreshKey = useRef<number | null>(null);
 
   const { ready: userReady, authenticated, onboardingComplete } = useUser();
 
@@ -161,6 +166,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const citySources = feedFilterSourcesForCity(city);
   const sourcesViewEnabled = useSourcesViewEnabled();
   const timeZone = timeZoneForArea(area);
+  const now = useNow();
 
   const selection = useMemo(
     () => selectionFromParams(searchParams),
@@ -211,6 +217,14 @@ function CityFeedCity({ city }: { city: FeedCity }) {
 
   const openDetail = useCallback(
     (card: FeedCard) => {
+      if (isHappyHoursHubCard(card)) {
+        const next: FeedTopic[] = ["happy_hours"];
+        setTopics(next);
+        trackFeedTopicChanged({ topics: next, city, surface: "feed" });
+        setSources([]);
+        syncUrl(mode, area, [], date, selection, next);
+        return;
+      }
       const next = selectionFromCard(card);
       trackDetailOpened({
         kind: next.kind,
@@ -219,7 +233,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       });
       syncUrl(mode, area, sources, date, next);
     },
-    [syncUrl, mode, area, sources, date],
+    [syncUrl, mode, area, sources, date, selection, city],
   );
 
   const closeDetail = useCallback(() => {
@@ -269,13 +283,14 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     });
   }, [city, areaParam]);
 
-  // Restore mode/sources/topics when landing without ?mode=
+  // Restore area/sources/topics when landing without ?mode=; always Today.
   useEffect(() => {
     if (searchParams.has("mode")) {
       setPrefsHydrated(true);
       return;
     }
 
+    const nextMode = defaultFeedMode();
     const stored = readFeedPrefs();
     if (stored && metroFromArea(stored.area) === city) {
       const nextArea = searchParams.has("area")
@@ -283,34 +298,29 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         : stored.area === "sf" || stored.area === "bay"
           ? stored.area
           : areaFromCityPath(city, null);
-      setMode(stored.mode);
+      const nextSources = sourcesViewEnabled ? stored.sources : sources;
+      const nextTopics = stored.topics;
+      const nextDate = dayKey(new Date(), timeZoneForArea(nextArea));
+      setMode(nextMode);
       setArea(nextArea);
       if (sourcesViewEnabled) {
         setSources(stored.sources);
       }
-      setTopics(stored.topics);
-      setDate(stored.date);
+      setTopics(nextTopics);
+      setDate(nextDate);
       syncUrl(
-        stored.mode,
+        nextMode,
         nextArea,
-        sourcesViewEnabled ? stored.sources : sources,
-        stored.date,
+        nextSources,
+        nextDate,
         selectionFromParams(searchParams),
-        stored.topics,
+        nextTopics,
       );
       setPrefsHydrated(true);
       return;
     }
 
-    // Wait for auth so signed-in users with tastes land on For you.
-    if (!userReady) return;
-
-    const nextMode = defaultFeedMode({
-      authenticated,
-      onboardingComplete,
-    });
-    const nextDate =
-      nextMode === "today" ? dayKey(new Date(), timeZone) : null;
+    const nextDate = dayKey(new Date(), timeZone);
     setMode(nextMode);
     setDate(nextDate);
     syncUrl(
@@ -323,14 +333,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     );
     setPrefsHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    city,
-    searchParams,
-    sourcesViewEnabled,
-    userReady,
-    authenticated,
-    onboardingComplete,
-  ]);
+  }, [city, searchParams, sourcesViewEnabled]);
 
   useEffect(() => {
     setFeedView(readFeedView());
@@ -408,8 +411,6 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   useEffect(() => {
     if (!prefsHydrated) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     const effectiveDate =
       mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
     const overviewFetch = mode === "date" && !effectiveDate;
@@ -426,23 +427,31 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     if (sources.length) params.set("sources", sources.join(","));
     if (topics.length) params.set("topics", topics.join(","));
     if (effectiveDate) params.set("date", effectiveDate);
-    void api<{
-      cards: FeedCard[];
-      prefsSummary?: {
-        interests: string[];
-        neighborhoods: string[];
-        budgetMax: number | null;
-        budgetEnabled?: boolean;
-        budgetTier?: number | null;
-      };
-    }>(`/v1/feed?${params.toString()}`)
+
+    const force =
+      lastFeedRefreshKey.current !== null &&
+      lastFeedRefreshKey.current !== refreshKey;
+    lastFeedRefreshKey.current = refreshKey;
+
+    const cached = force ? null : peekFeedCache(params);
+    if (cached) {
+      setCards(cached);
+      if (overviewFetch) {
+        setCalendarMeta(feedCalendarMeta(cached, timeZone));
+      }
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    void fetchFeedCached(params, { force })
       .then((data) => {
         if (cancelled) return;
         setCards(data.cards);
         if (overviewFetch) {
           setCalendarMeta(feedCalendarMeta(data.cards, timeZone));
         }
-        if (data.prefsSummary) setPrefsSummary(data.prefsSummary);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
@@ -454,6 +463,55 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       cancelled = true;
     };
   }, [prefsHydrated, mode, area, sources, topics, date, timeZone, refreshKey]);
+
+  // Warm For you in the background after Today paints so mode switch is instant.
+  useEffect(() => {
+    if (!prefsHydrated || !userReady) return;
+    if (!authenticated || !onboardingComplete) return;
+    if (mode !== "today") return;
+    if (loading) return;
+
+    let cancelled = false;
+    const params = new URLSearchParams({
+      mode: "for_you",
+      area,
+      limit: "40",
+    });
+    if (sources.length) params.set("sources", sources.join(","));
+    if (topics.length) params.set("topics", topics.join(","));
+
+    const run = () => {
+      if (cancelled) return;
+      void fetchFeedCached(params);
+    };
+
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (typeof requestIdleCallback === "function") {
+      idleId = requestIdleCallback(run, { timeout: 2500 });
+    } else {
+      timeoutId = setTimeout(run, 0);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId != null && typeof cancelIdleCallback === "function") {
+        cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) clearTimeout(timeoutId);
+    };
+  }, [
+    prefsHydrated,
+    userReady,
+    authenticated,
+    onboardingComplete,
+    mode,
+    area,
+    sources,
+    topics,
+    loading,
+    refreshKey,
+  ]);
 
   // Fire once per successful fetch (when loading flips false), not on view toggles.
   const wasFeedLoading = useRef(false);
@@ -485,8 +543,40 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     feedView,
   ]);
 
-  const movies = cards.filter((c) => c.kind === "movie_showtime");
-  const events = cards.filter((c) => c.kind === "event");
+  const effectiveDate =
+    mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
+
+  const browsingToday =
+    mode === "today" &&
+    effectiveDate === dayKey(now, timeZone);
+
+  const displayCards = useMemo(
+    () =>
+      withHappyHoursHubCard(cards, {
+        city,
+        now,
+        timeZone,
+        mode,
+        topics,
+        browsingToday,
+      }),
+    [cards, city, now, timeZone, mode, topics, browsingToday],
+  );
+
+  const movies = displayCards.filter((c) => c.kind === "movie_showtime");
+
+  // Movies near you only when the Movies topic is on — don't lead For you /
+  // Weekend with showtimes before organic picks.
+  const moviesTopicActive = topics.includes("movies");
+  const moviesSectionEligible =
+    mode === "for_you" || (mode === "weekend" && !date);
+  const showMoviesSection =
+    movies.length > 0 && moviesTopicActive && moviesSectionEligible;
+  const mainCards =
+    moviesSectionEligible && !moviesTopicActive
+      ? displayCards.filter((c) => c.kind !== "movie_showtime")
+      : displayCards;
+  const mainEvents = mainCards.filter((c) => c.kind === "event");
 
   const allUpcomingLabel =
     area === "chicago"
@@ -494,9 +584,6 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       : area === "sf"
         ? "All upcoming in SF"
         : "All upcoming in the Bay";
-
-  const effectiveDate =
-    mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
 
   const selectedDay = useMemo(
     () => (effectiveDate ? dayCardLabel(effectiveDate, timeZone) : null),
@@ -715,8 +802,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
               className={`feed-results${isRefreshing ? " is-refreshing" : ""}`}
               aria-busy={isRefreshing}
             >
-            {movies.length > 0 &&
-              (mode === "for_you" || (mode === "weekend" && !date)) && (
+            {showMoviesSection && (
               <MoviesSection
                 movies={movies}
                 selected={selection}
@@ -730,7 +816,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                 <h2 className="section-title">{sectionTitle}</h2>
                 <div className="section-title-row__actions">
                   <Link
-                    href={feedMapHref(mode, area, sources, date, topics)}
+                    href={feedMapHref(mode, area, sources, date)}
                     className="feed-map-link"
                   >
                     Map
@@ -738,13 +824,13 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                   <FeedViewToggle value={feedView} onChange={selectFeedView} />
                 </div>
               </div>
-              {events.length === 0 && movies.length === 0 && (
+              {mainCards.length === 0 && !showMoviesSection && (
                 <p className="muted">
                   Nothing in this view — try All topics
                   {sourcesViewEnabled ? " and All sources" : ""}
                   {mode !== "date" ? ", pick Select Date" : ""}
                   {city === "sf" ? ", widen to Bay Area, " : ", "}
-                  {topics.includes("movies") && city === "chicago"
+                  {moviesTopicActive && city === "chicago"
                     ? " (movies are SF-only for now), "
                     : ""}
                   or <Link href="/onboarding">update tastes</Link>.
@@ -752,7 +838,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
               )}
               {useByTimeLayout ? (
                 <ByTimeFeed
-                  cards={cards}
+                  cards={mainCards}
                   timeZone={timeZone}
                   onSelect={openDetail}
                   isSelected={(card) => cardMatchesSelection(card, selection)}
@@ -779,7 +865,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  {(chronologicalBrowse ? cards : events).map((card, i) => (
+                  {(chronologicalBrowse ? mainCards : mainEvents).map((card, i) => (
                     <FeedCardView
                       key={`${card.id}:${card.startsAt}`}
                       card={card}

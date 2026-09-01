@@ -85,6 +85,10 @@ function venueFrom(ev: PartifulEvent): {
   };
 }
 
+/** Incidental copy that should not trigger a food category. */
+const PARTIFUL_FOOD_NOISE =
+  /outside food|bring .{0,24}food|food is allowed|food permitted|byof|free food|no food/i;
+
 /** Partiful explore SSR has no per-event tags — infer from section rails + copy. */
 export function partifulCategoriesAndTags(opts: {
   title: string;
@@ -107,7 +111,22 @@ export function partifulCategoriesAndTags(opts: {
     cats.add("nightlife");
   }
 
-  if (/workshop|class\b|drawing|figure|watercolor|craft|bouquet|florist|candle class|trunk show|art show|gallery|exhibit|make\b/i.test(text)) {
+  // Social play nights (chess, trivia, etc.) — before arts/food keyword noise.
+  const hasGames =
+    /\bchess\b|board games?|game night|trivia|bingo|mahjong|dnd\b|dungeons?\s*&?\s*dragons|tabletop|card games?|poker night/i.test(
+      text,
+    );
+  if (hasGames) {
+    cats.add("nightlife");
+    tags.add("games");
+  }
+
+  // Avoid bare `make\b` ("make sure") and bare `night\b` ("Monday Night Chess").
+  if (
+    /workshop|class\b|drawing|figure|watercolor|craft|bouquet|florist|candle class|trunk show|art show|gallery|exhibit|make something|make your own|arts?\s*&?\s*crafts?/i.test(
+      text,
+    )
+  ) {
     cats.add("arts");
   }
   if (/pickleball|run club|hike|hiking|paddle|yoga|pilates|field day|stroller walk|walk with friends|walk\b|marathon|corgi|sports|fitness/i.test(text)) {
@@ -117,17 +136,26 @@ export function partifulCategoriesAndTags(opts: {
   if (/picnic|park swap|park hangout|dolores|ggp|golden gate park/i.test(text)) {
     cats.add("outdoors");
   }
-  if (/matcha|coffee|donuts|wine|brunch|\bfood\b|\beat\b|restaurant|bar crawl|tasting|kitchen|matcha society/i.test(text)) {
+  if (
+    /matcha|coffee|donuts|wine|brunch|restaurant|bar crawl|tasting|kitchen|matcha society|food truck|food crawl|dinner party|supper club|\beat\b/i.test(
+      text,
+    ) ||
+    (/\bfood\b/i.test(text) && !PARTIFUL_FOOD_NOISE.test(text))
+  ) {
     cats.add("food");
   }
   if (/comedy|standup|stand-up|improv|drag show/i.test(text)) {
     cats.add("comedy.showcase");
   }
-  if (/dj\b|edm|techno|beats|live at|karaoke|afters|mint glaze|sound of|night\b|rave/i.test(text)) {
+  if (
+    /dj\b|edm|techno|beats|live at|karaoke|afters|mint glaze|sound of|rave|live music/i.test(
+      text,
+    )
+  ) {
     cats.add("music.live");
     cats.add("nightlife");
   }
-  if (/\bparty\b|club night|bar\b|fireworks/i.test(text)) {
+  if (/\bparty\b|club night|\bbar\b|fireworks|nightlife|late night|night out/i.test(text)) {
     cats.add("nightlife");
   }
   if (/book club|conversation|talk\b|tech week|meetup|networking/i.test(text)) {
@@ -146,9 +174,13 @@ export function partifulCategoriesAndTags(opts: {
   }
 
   // Daytime socials mis-labeled when "Evenings & Weekends" also lists them.
+  // Keep nightlife for evening game nights (chess club at a bar, trivia, etc.).
   if (
     cats.has("nightlife") &&
-    /workshop|pickleball|class\b|picnic|walk|run club|book club|market|art show|coffee|matcha|donuts|paddle|yoga|pilates|field day|hike/i.test(text)
+    !hasGames &&
+    /workshop|pickleball|class\b|picnic|walk|run club|book club|market|art show|coffee|matcha|donuts|paddle|yoga|pilates|field day|hike/i.test(
+      text,
+    )
   ) {
     cats.delete("nightlife");
     cats.delete("music.live");

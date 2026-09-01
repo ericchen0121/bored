@@ -11,6 +11,11 @@ export function gatheringPhraseForArea(area: FeedArea): string {
   return "Gathering the fog…";
 }
 
+/** Map loading pill: city name + metro gathering line. */
+export function mapLoadingPhrase(area: FeedArea, cityLabel: string): string {
+  return `${cityLabel} · ${gatheringPhraseForArea(area)}`;
+}
+
 /** Status copy while an existing feed refreshes for new filters. */
 export function feedRefreshPhrase(
   area: FeedArea,

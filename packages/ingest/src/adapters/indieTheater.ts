@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { decodeHtmlEntities } from "@bored/shared";
 import { enrichFilm } from "../enrichFilm.js";
 import {
   contentHash,
@@ -308,11 +309,5 @@ function absoluteUrl(href: string, base: string): string {
 }
 
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&#8217;/g, "'")
-    .replace(/&#8216;/g, "'")
-    .replace(/&#8220;/g, '"')
-    .replace(/&#8221;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&nbsp;/g, " ");
+  return decodeHtmlEntities(text);
 }

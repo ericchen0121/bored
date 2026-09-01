@@ -75,7 +75,7 @@ import {
 
 import { coalesceEventOccurrences } from "@bored/shared/coalesce";
 import { config } from "dotenv";
-import { and, asc, eq, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { resolve } from "node:path";
@@ -875,6 +875,72 @@ app.get("/v1/movies/showtimes", async (c) => {
   return c.json({ showtimes: rows });
 });
 
+type TodayFeedCacheBody = {
+  mode: string;
+  area: string;
+  date: string | null;
+  generatedAt: string;
+  prefsSummary: {
+    interests: string[];
+    neighborhoods: string[];
+    budgetEnabled: boolean;
+    budgetTier: number | null;
+    budgetMax: number | null;
+  };
+  cards: { id: string; filmId?: string | null; [key: string]: unknown }[];
+};
+
+async function dismissedIdsForUser(uid: string): Promise<Set<string>> {
+  const rows = await db
+    .select()
+    .from(signals)
+    .where(and(eq(signals.userId, uid), eq(signals.type, "dismissed")))
+    .limit(500);
+  const ids = new Set<string>();
+  for (const s of rows) {
+    ids.add(s.targetId);
+    if (s.targetKind === "film") ids.add(`film:${s.targetId}`);
+  }
+  return ids;
+}
+
+function prefsSummaryFrom(prefs: UserPrefs) {
+  return {
+    interests: prefs.interests.map((i) => i.category),
+    neighborhoods: prefs.neighborhoods,
+    budgetEnabled: prefs.budgetEnabled ?? false,
+    budgetTier: prefs.budgetTier ?? null,
+    budgetMax: prefs.budgetMax ?? null,
+  };
+}
+
+function filterDismissedFeedCards<
+  T extends { id: string; filmId?: string | null },
+>(cards: T[], dismissedIds: Set<string>): T[] {
+  if (!dismissedIds.size) return cards;
+  return cards.filter(
+    (c) =>
+      !dismissedIds.has(c.id) &&
+      !(c.filmId && dismissedIds.has(`film:${c.filmId}`)),
+  );
+}
+
+/** Shared Today payload + per-user prefsSummary / dismissals. */
+async function overlayTodayFeedForUser(
+  body: TodayFeedCacheBody,
+  uid: string,
+): Promise<TodayFeedCacheBody> {
+  const [prefs, dismissedIds] = await Promise.all([
+    getPrefs(uid),
+    dismissedIdsForUser(uid),
+  ]);
+  return {
+    ...body,
+    prefsSummary: prefsSummaryFrom(prefs),
+    cards: filterDismissedFeedCards(body.cards, dismissedIds),
+  };
+}
+
 app.get("/v1/feed", async (c) => {
   try {
   const uid = await userId(c);
@@ -902,12 +968,10 @@ app.get("/v1/feed", async (c) => {
         : 40),
   });
 
-  // Shared Today feeds are cacheable; authenticated users skip (dismiss/save).
-  const authedUserId = await resolveAuthenticatedUserId(
-    c.req.header("Authorization"),
-  );
+  // Shared Today feeds are cacheable for everyone (auth + anon). Dismissals /
+  // prefsSummary are overlaid per request so the cached payload stays shared.
   const todayCacheKey =
-    query.mode === "today" && !authedUserId
+    query.mode === "today"
       ? todayFeedCacheKey({
           area: query.area,
           date: query.date ?? null,
@@ -920,7 +984,9 @@ app.get("/v1/feed", async (c) => {
     const cached = getTodayFeedCache(todayCacheKey);
     if (cached) {
       c.header("X-Feed-Cache", "hit");
-      return c.json(cached);
+      return c.json(
+        await overlayTodayFeedForUser(cached as TodayFeedCacheBody, uid),
+      );
     }
   }
 
@@ -986,14 +1052,14 @@ app.get("/v1/feed", async (c) => {
     ? and(gte(events.startsAt, windowStart), lt(events.startsAt, windowEnd))
     : and(gte(events.startsAt, windowStart), lte(events.startsAt, windowEnd));
   /** Long runs (exhibitions): include when the window overlaps [startsAt, endsAt]. */
-  const timedInWindow = or(
-    startsInWindow,
-    and(
-      isNotNull(events.endsAt),
-      lt(events.startsAt, windowEnd),
-      gte(events.endsAt, windowStart),
-    ),
+  const overlapInWindow = and(
+    isNotNull(events.endsAt),
+    lt(events.startsAt, windowEnd),
+    gte(events.endsAt, windowStart),
+    // Calendar-day browse: drop overnight stragglers that already ended.
+    ...(dayDate ? [gt(events.endsAt, now)] : []),
   );
+  const timedInWindow = or(startsInWindow, overlapInWindow);
 
   const curatedSourceSet = new Set<string>();
   if (sourceFilter) {
@@ -1403,25 +1469,34 @@ app.get("/v1/feed", async (c) => {
     }
   }
 
-  const userSignals = await db
-    .select()
-    .from(signals)
-    .where(eq(signals.userId, uid))
-    .limit(500);
+  // Today is a shared chrono listing — keep rank input user-agnostic so the
+  // cache payload is identical for everyone. Dismissals overlay on the way out.
+  const sharedToday = query.mode === "today";
+  let dismissedIds = new Set<string>();
+  let savedBoostIds = new Set<string>();
+  if (!sharedToday) {
+    const userSignals = await db
+      .select()
+      .from(signals)
+      .where(eq(signals.userId, uid))
+      .limit(500);
 
-  const dismissedIds = new Set(
-    userSignals.filter((s) => s.type === "dismissed").map((s) => s.targetId),
-  );
-  for (const s of userSignals) {
-    if (s.type === "dismissed" && s.targetKind === "film") {
-      dismissedIds.add(`film:${s.targetId}`);
+    dismissedIds = new Set(
+      userSignals.filter((s) => s.type === "dismissed").map((s) => s.targetId),
+    );
+    for (const s of userSignals) {
+      if (s.type === "dismissed" && s.targetKind === "film") {
+        dismissedIds.add(`film:${s.targetId}`);
+      }
     }
+    savedBoostIds = new Set(
+      userSignals
+        .filter((s) => s.type === "saved" || s.type === "going")
+        .map((s) =>
+          s.targetKind === "film" ? `film:${s.targetId}` : s.targetId,
+        ),
+    );
   }
-  const savedBoostIds = new Set(
-    userSignals
-      .filter((s) => s.type === "saved" || s.type === "going")
-      .map((s) => (s.targetKind === "film" ? `film:${s.targetId}` : s.targetId)),
-  );
 
   const demotionRows = await db
     .select()
@@ -1508,18 +1583,13 @@ app.get("/v1/feed", async (c) => {
     area: query.area,
     date: dayDate,
     generatedAt: now.toISOString(),
-    prefsSummary: {
-      interests: prefs.interests.map((i) => i.category),
-      neighborhoods: prefs.neighborhoods,
-      budgetEnabled: prefs.budgetEnabled ?? false,
-      budgetTier: prefs.budgetTier ?? null,
-      budgetMax: prefs.budgetMax ?? null,
-    },
+    prefsSummary: prefsSummaryFrom(prefs),
     cards,
   };
   if (todayCacheKey) {
     setTodayFeedCache(todayCacheKey, body);
     c.header("X-Feed-Cache", "miss");
+    return c.json(await overlayTodayFeedForUser(body, uid));
   }
   return c.json(body);
   } catch (err) {

@@ -1,3 +1,4 @@
+import { stripHtmlToText } from "@bored/shared";
 import { XMLParser } from "fast-xml-parser";
 import {
   contentHash,
@@ -66,7 +67,7 @@ export const newsletterAdapter: SourceAdapter = {
 };
 
 function strip(html: string) {
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return stripHtmlToText(html);
 }
 
 /**
@@ -105,12 +106,18 @@ function isCuratedArticleNotEvent(title: string, link: string, body: string): bo
     return true;
   }
 
-  // Evergreen guides / venue directories (not a single outing)
+  // Evergreen guides / venue directories / multi-event hubs (not a single outing)
+  // Note: do not put `\b` after `last updated:` — `:` is non-word so the boundary never matches.
   if (
     /\bevents?\s*&\s*classes\b/i.test(t) ||
     /\bevents?,?\s*(clubs?|classes?).{0,20}(pop-ups?|&)/i.test(t) ||
-    /\b(last updated:|sign up below|keep up on last-minute)\b/i.test(text) ||
-    /\/p\/(salsa-dancing|directory|about)\b/i.test(slug) ||
+    /\blast updated:/i.test(text) ||
+    /\b(sign up below|keep up on last-minute)\b/i.test(text) ||
+    /\b(tributes?|vigils?)\b/i.test(t) ||
+    /\b(a few tributes|more events as they are announced|check back on this page for updates)\b/i.test(
+      text,
+    ) ||
+    /\/p\/(salsa-dancing|directory|about|.*tributes?)\b/i.test(slug) ||
     /\b(how to|where to|insider advice|first-timer|etiquette|guide|grants?|data centers?|311 services|dating apps|facial scanning|smart glasses|pay what you can day)\b/i.test(
       t,
     ) ||

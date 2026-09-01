@@ -149,7 +149,7 @@ Primary product endpoint.
 
 | Query | Values | Default | Notes |
 |---|---|---|---|
-| `mode` | `for_you` \| `today` \| `weekend` \| `date` | `for_you` | Time window + ranking strategy (legacy `tonight`→`today`, `all`→`date`) |
+| `mode` | `for_you` \| `today` \| `weekend` \| `date` | `today` | Time window + ranking strategy (legacy `tonight`→`today`, `all`→`date`). Web cold-start / no-`?mode=` lands on **Today**; **For you** is opt-in via mode switch or explicit URL. |
 | `area` | `sf` \| `bay` \| `chicago` | `bay` | Geographic filter (SF proper / Bay / Chicago) |
 | `limit` | 1–200 | 40 (200 for `all` / `date`) | |
 | `date` | `YYYY-MM-DD` | — | Local calendar day in the **metro** timezone (`SF_DEFAULT` / `CHI_DEFAULT`). Used with `mode=all`. Full day window `[midnight, next midnight)` — including earlier today. Web collapses finished (non-live) rows behind “View earlier” when browsing Today. |
@@ -259,6 +259,7 @@ Requires `Authorization: Bearer <ADMIN_TOKEN>` (or `X-Admin-Token`). See [Admin]
 
 - Web uses `apps/web/src/lib/api.ts` → `NEXT_PUBLIC_API_URL`
 - Feed URL state (`mode`, `area`, `topics`, `sources`, `date`, detail `e`/`m`) is mirrored in session storage via `apps/web/src/lib/feed-prefs.ts`
+- **Landing:** `/` and `/{city}` without `?mode=` always open **Today** (fast shared cache for anon and signed-in). Signed-in users with tastes get a background prefetch of For you into the client feed cache so the mode switch feels instant.
 - **Tastes** (`PUT /v1/me/interests`) affect ranking in personalized modes — they do not filter the feed unless combined with `categories`
 - **Topics** (`?topics=concerts,free`) are browse filters by activity type, independent of ingest source
 - **Sources** (`?sources=luma,19hz`) filter by adapter provenance; orthogonal to topics
