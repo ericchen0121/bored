@@ -5336,6 +5336,9 @@ select {
     /* No top padding — a gap above .site-header reads as an off-color strip
        against the body gradient. Spacing lives under the header/hero. */
     padding: 0 0 64px;
+    /* Let hero 100vw break out; html/body still clip sideways rubber-band.
+       Mobile keeps .shell overflow-x: clip + padding-based bleed. */
+    overflow-x: visible;
   }
 
   /* Shell has no side padding — break out to true viewport edges */
