@@ -4,6 +4,13 @@
  * events row + expand at feed read (same pattern as food_deals).
  */
 
+import {
+  addCalendarDays,
+  dayKey,
+  fromZonedTime,
+  zonedWeekday,
+} from "./datetime";
+
 export type RecurringSchedule = {
   /** 0=Sun … 6=Sat; null = every day (rare) */
   weekday: number | null;
@@ -17,43 +24,59 @@ export type RecurringOccurrence = {
   startsAt: Date;
 };
 
-function nthWeekdayOfMonth(day: Date): number {
-  return Math.ceil(day.getDate() / 7);
+function nthWeekdayOfMonth(yyyyMmDd: string): number {
+  const dayOfMonth = Number(yyyyMmDd.slice(8, 10));
+  return Math.ceil(dayOfMonth / 7);
 }
 
 export function recurringMatchesDay(
   schedule: RecurringSchedule,
-  day: Date,
+  yyyyMmDd: string,
+  timeZone: string,
 ): boolean {
-  if (schedule.weekday != null && day.getDay() !== schedule.weekday) {
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  const noon = fromZonedTime(y!, m!, d!, 12, 0, 0, timeZone);
+  if (
+    schedule.weekday != null &&
+    zonedWeekday(noon, timeZone) !== schedule.weekday
+  ) {
     return false;
   }
   if (schedule.nthWeekday != null) {
-    if (nthWeekdayOfMonth(day) !== schedule.nthWeekday) return false;
+    if (nthWeekdayOfMonth(yyyyMmDd) !== schedule.nthWeekday) return false;
   }
   return true;
 }
 
 export function recurringTimeOnDay(
   schedule: RecurringSchedule,
-  day: Date,
+  yyyyMmDd: string,
+  timeZone: string,
 ): RecurringOccurrence {
-  const startsAt = new Date(day);
-  startsAt.setHours(schedule.hour, schedule.minute, 0, 0);
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  const startsAt = fromZonedTime(
+    y!,
+    m!,
+    d!,
+    schedule.hour,
+    schedule.minute,
+    0,
+    timeZone,
+  );
   return { startsAt };
 }
 
 export function nextRecurringOccurrence(
   schedule: RecurringSchedule,
   now: Date,
+  timeZone: string,
   horizonDays = 60,
 ): RecurringOccurrence | null {
+  const today = dayKey(now, timeZone);
   for (let d = 0; d < horizonDays; d++) {
-    const day = new Date(now);
-    day.setHours(0, 0, 0, 0);
-    day.setDate(day.getDate() + d);
-    if (!recurringMatchesDay(schedule, day)) continue;
-    const occ = recurringTimeOnDay(schedule, day);
+    const key = addCalendarDays(today, d);
+    if (!recurringMatchesDay(schedule, key, timeZone)) continue;
+    const occ = recurringTimeOnDay(schedule, key, timeZone);
     if (occ.startsAt.getTime() < now.getTime() - 3600000) continue;
     return occ;
   }
@@ -64,16 +87,17 @@ export function expandRecurringOccurrences(
   schedule: RecurringSchedule,
   windowStart: Date,
   windowEnd: Date,
+  timeZone: string,
 ): RecurringOccurrence[] {
   const out: RecurringOccurrence[] = [];
-  const day = new Date(windowStart);
-  day.setHours(0, 0, 0, 0);
+  let key = dayKey(windowStart, timeZone);
+  const endKey = dayKey(windowEnd, timeZone);
   const endMs = windowEnd.getTime();
   const maxDays = 45;
   for (let i = 0; i < maxDays; i++) {
-    if (day.getTime() > endMs) break;
-    if (recurringMatchesDay(schedule, day)) {
-      const occ = recurringTimeOnDay(schedule, day);
+    if (key > endKey) break;
+    if (recurringMatchesDay(schedule, key, timeZone)) {
+      const occ = recurringTimeOnDay(schedule, key, timeZone);
       if (
         occ.startsAt.getTime() >= windowStart.getTime() &&
         occ.startsAt.getTime() <= endMs
@@ -81,7 +105,7 @@ export function expandRecurringOccurrences(
         out.push(occ);
       }
     }
-    day.setDate(day.getDate() + 1);
+    key = addCalendarDays(key, 1);
   }
   return out;
 }
@@ -149,6 +173,7 @@ export function expandRecurringRowsForFeed<
     source: string;
     startsAt: Date;
     endsAt?: Date | null;
+    timezone?: string | null;
     rawPayload?: unknown;
   },
 >(
@@ -168,8 +193,14 @@ export function expandRecurringRowsForFeed<
     const payload =
       (row.rawPayload as Record<string, unknown> | null | undefined) ?? null;
     const schedule = recurringScheduleFromPayload(payload);
-    if (!schedule || opts.mode === "for_you") {
+    const timeZone = row.timezone ?? "America/Los_Angeles";
+    if (!schedule) {
       out.push(row);
+      continue;
+    }
+    if (opts.mode === "for_you") {
+      const next = nextRecurringOccurrence(schedule, new Date(), timeZone);
+      out.push(next ? { ...row, startsAt: next.startsAt, endsAt: null } : row);
       continue;
     }
 
@@ -177,6 +208,7 @@ export function expandRecurringRowsForFeed<
       schedule,
       opts.windowStart,
       opts.windowEnd,
+      timeZone,
     );
     if (!occurrences.length) continue;
 

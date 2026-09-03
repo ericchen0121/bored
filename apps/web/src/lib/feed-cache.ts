@@ -72,3 +72,48 @@ export function feedParamsWithoutTopics(
   next.delete("topics");
   return next;
 }
+
+/** Home "All events" shape — used to warm-start Map without a cold refetch. */
+export const FEED_ALL_EVENTS_LIMIT = 200;
+/** Map denser coverage when All looks capped at FEED_ALL_EVENTS_LIMIT. */
+export const FEED_MAP_TOPUP_LIMIT = 500;
+
+export function feedAllEventsParams(opts: {
+  mode: string;
+  area: string;
+  sources?: readonly string[];
+  date?: string | null;
+  limit?: number;
+}): URLSearchParams {
+  const params = new URLSearchParams({
+    mode: opts.mode,
+    area: opts.area,
+    limit: String(opts.limit ?? FEED_ALL_EVENTS_LIMIT),
+    videos: "exclude",
+  });
+  if (opts.sources?.length) params.set("sources", opts.sources.join(","));
+  if (opts.date) params.set("date", opts.date);
+  return params;
+}
+
+/** Prefer newer/longer list; keep first occurrence of each id. */
+export function mergeFeedCardsById(
+  primary: FeedCard[],
+  extra: FeedCard[],
+): FeedCard[] {
+  if (!extra.length) return primary;
+  if (!primary.length) return extra;
+  const seen = new Set<string>();
+  const out: FeedCard[] = [];
+  for (const card of extra) {
+    if (seen.has(card.id)) continue;
+    seen.add(card.id);
+    out.push(card);
+  }
+  for (const card of primary) {
+    if (seen.has(card.id)) continue;
+    seen.add(card.id);
+    out.push(card);
+  }
+  return out;
+}

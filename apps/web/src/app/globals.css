@@ -34,7 +34,13 @@ body {
   font-family: var(--font-body);
 }
 
+/* Kill sideways rubber-band from full-bleed hero (100vw) + shell padding */
+html {
+  overflow-x: clip;
+}
+
 body {
+  overflow-x: clip;
   background:
     radial-gradient(1200px 600px at 10% -10%, rgba(61, 142, 165, 0.28), transparent 55%),
     radial-gradient(900px 500px at 90% 0%, rgba(217, 107, 76, 0.18), transparent 50%),
@@ -59,7 +65,7 @@ select {
   min-height: 100vh;
   padding: 0 16px 48px;
   position: relative;
-  transition: width 220ms ease;
+  overflow-x: clip;
 }
 
 .shell::before {
@@ -149,49 +155,35 @@ select {
 .site-header__actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.site-header__tastes {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  color: var(--mist);
-  font-size: 0.85rem;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.site-header__tastes:hover {
-  color: var(--cream);
-}
-
-.site-header__saved {
+.site-header__icon-btn {
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
-  margin: -6px -4px -6px 0;
+  margin: 0;
   border-radius: 999px;
   color: var(--mist);
+  flex-shrink: 0;
 }
 
-.site-header__saved:hover {
+.site-header__icon-btn:hover {
+  color: var(--cream);
+}
+
+.site-header__icon-btn.is-active {
   color: var(--coral);
 }
 
-.site-header__saved.is-active {
-  color: var(--coral);
+.site-header__action-icon {
+  display: block;
 }
 
-.site-header__saved-icon path {
-  fill: none;
-  transition: fill 160ms ease;
-}
-
-.site-header__saved.is-active .site-header__saved-icon path,
-.site-header__saved:hover .site-header__saved-icon path {
+.site-header__icon-btn.is-active .site-header__saved-icon path,
+.site-header__icon-btn:hover .site-header__saved-icon path {
   fill: currentColor;
 }
 
@@ -2311,16 +2303,91 @@ select {
   max-width: 36rem;
 }
 
-.site-header__account {
-  border: none;
-  background: transparent;
-  color: var(--mist);
-  font-size: 0.82rem;
-  cursor: pointer;
-  padding: 0;
+.account-page {
+  padding: 28px 0 48px;
+  max-width: 28rem;
 }
 
-.site-header__account:hover {
+.account-page__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+}
+
+.account-page__lede {
+  margin: 10px 0 0;
+  color: var(--mist);
+  font-size: 0.95rem;
+}
+
+.account-page__email {
+  margin: 6px 0 0;
+  font-size: 1.05rem;
+  color: var(--cream);
+  word-break: break-word;
+}
+
+.account-page__links {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.account-page__links a {
+  display: block;
+  padding: 14px 2px;
+  color: var(--fog);
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+}
+
+.account-page__links li:last-child a {
+  border-bottom: none;
+}
+
+.account-page__links a:hover {
+  color: var(--cream);
+}
+
+.account-page__session {
+  margin: 20px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.account-page__sign-out {
+  appearance: none;
+  margin-top: 24px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+.account-page__sign-out:hover:not(:disabled) {
+  border-color: rgba(217, 107, 76, 0.45);
+  color: #f0c4b6;
+}
+
+.account-page__sign-out:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.account-page__back {
+  margin: 28px 0 0;
+  font-size: 0.9rem;
+  color: var(--mist);
+}
+
+.account-page__back a:hover {
   color: var(--cream);
 }
 
@@ -2546,11 +2613,13 @@ select {
   animation: cityHeroIn 700ms ease both;
 }
 
-/* Full viewport width — Luma-style edge-to-edge cover */
+/* Full viewport width — Luma-style edge-to-edge cover.
+   Prefer 100% + shell padding breakout on narrow shells; use 100vw only
+   when the shell is inset from the viewport (desktop). */
 .city-hero__bleed {
   position: relative;
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
+  width: calc(100% + 32px);
+  margin-left: -16px;
   min-height: clamp(220px, 42vw, 380px);
   overflow: hidden;
   background: transparent;
@@ -2651,6 +2720,8 @@ select {
   height: 28px;
   display: flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
 }
 
@@ -2659,9 +2730,36 @@ select {
   margin: 0;
 }
 
-.city-hero__tastes-slot .feed-tastes-line,
-.city-hero__tastes-slot .feed-tastes-line__chips {
+.city-hero__tastes-slot .feed-tastes-line {
+  width: 100%;
+  min-width: 0;
   flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.city-hero__tastes-slot .feed-tastes-line__chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.city-hero__tastes-slot .feed-tastes-line__chips::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.city-hero__tastes-slot .feed-taste-chip {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.city-hero__tastes-slot .feed-tastes-line__edit {
+  flex: 0 0 auto;
 }
 
 .city-hero__eyebrow {
@@ -3335,11 +3433,20 @@ select {
 @keyframes drawerIn {
   from {
     opacity: 0.6;
-    transform: translateX(28px);
+    transform: translate3d(28px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: none;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes drawerSheetIn {
+  from {
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -3366,9 +3473,10 @@ select {
   border: 0;
   padding: 0;
   cursor: pointer;
-  background: rgba(6, 10, 14, 0.55);
-  backdrop-filter: blur(2px);
-  animation: backdropIn 220ms ease both;
+  /* Luma-style: darken only — keep feed text sharp behind the sheet */
+  background: rgba(0, 0, 0, 0.45);
+  animation: backdropIn 280ms ease both;
+  transition: opacity 280ms ease;
 }
 
 .detail-drawer {
@@ -3384,7 +3492,15 @@ select {
   background: #0c1218;
   border-left: 1px solid var(--line);
   box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
-  animation: drawerIn 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: drawerIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.detail-drawer.is-dragging {
+  animation: none !important;
+  transition: none !important;
+  touch-action: none;
 }
 
 .detail-drawer__mesh {
@@ -3400,9 +3516,8 @@ select {
   position: relative;
   z-index: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 16px 18px 10px;
   border-bottom: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
   flex-shrink: 0;
@@ -3412,6 +3527,24 @@ select {
     rgba(12, 18, 24, 0.35) 100%
   );
   backdrop-filter: blur(8px);
+}
+
+.detail-drawer__grab {
+  display: none;
+  width: 40px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  flex-shrink: 0;
+}
+
+.detail-drawer__chrome-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
 }
 
 .detail-drawer__label {
@@ -3436,6 +3569,43 @@ select {
   border-color: rgba(232, 165, 75, 0.45);
   color: var(--cream);
   transform: translateY(-1px);
+}
+
+@media (max-width: 899px) {
+  .detail-drawer {
+    width: 100%;
+    border-left: none;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.45);
+    animation: drawerSheetIn 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  }
+
+  .detail-drawer__chrome {
+    padding-top: 10px;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .detail-drawer__chrome:active {
+    cursor: grabbing;
+  }
+
+  .detail-drawer__grab {
+    display: block;
+  }
+
+  .detail-drawer.is-dragging .detail-drawer__scroll {
+    overflow: hidden;
+    touch-action: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-drawer,
+  .detail-drawer__backdrop {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 .detail-drawer__scroll {
@@ -5166,6 +5336,12 @@ select {
     /* No top padding — a gap above .site-header reads as an off-color strip
        against the body gradient. Spacing lives under the header/hero. */
     padding: 0 0 64px;
+  }
+
+  /* Shell has no side padding — break out to true viewport edges */
+  .city-hero__bleed {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
   }
 
   .shell:has(.feed-layout),

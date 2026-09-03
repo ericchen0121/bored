@@ -44,6 +44,16 @@
         "Never push or merge automatically."
       ],
       "importance": "high"
+    },
+    {
+      "description": "Ship to prod — rebuild, migrate, secrets, re-ingest",
+      "examples": [
+        "Follow docs/ship-checklist.md when making prod match local after multi-agent work.",
+        "Never Redeploy stale images; railway up to rebuild api+web+ingest together for schema/feed/adapter changes.",
+        "Do not dump local DB to Railway — migrate + one-shot missing adapters (instagram/youtube via railway ssh).",
+        "Sync renewed IG_ACCESS_TOKEN to Railway env and prod app_settings; run pnpm ship:preflight before calling done."
+      ],
+      "importance": "high"
     }
   ],
   "meta": {

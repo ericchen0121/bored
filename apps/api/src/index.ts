@@ -31,6 +31,7 @@ import {
   expandRecurringRowsForFeed,
   filterCuratedFeedRows,
   foodDealScheduleFromPayload,
+  nextFoodDealOccurrence,
   formatDailyHoursLabel,
   dailyHoursFromPayload,
   isTimeTbaTag,
@@ -201,6 +202,9 @@ function presentEvent<
     address?: string | null;
     city?: string | null;
     neighborhood?: string | null;
+    timezone?: string | null;
+    startsAt?: Date | string;
+    endsAt?: Date | string | null;
   },
 >(row: T): T {
   const payload =
@@ -209,25 +213,37 @@ function presentEvent<
     row.source === "funcheap" && row.imageUrl
       ? { ...row, imageUrl: upgradeFuncheapImageUrl(row.imageUrl) }
       : row.source === "food_deals"
-        ? {
-            ...row,
-            imageUrl: resolveFoodDealImageUrl({
-              imageUrl: row.imageUrl,
-              dealId:
-                typeof payload?.dealId === "string" ? payload.dealId : null,
-              title: row.title,
-              dealSummary: [
-                typeof payload?.dealSummary === "string"
-                  ? payload.dealSummary
-                  : "",
-                row.description ?? "",
-              ]
-                .filter(Boolean)
-                .join(" "),
-              dealKind:
-                typeof payload?.dealKind === "string" ? payload.dealKind : null,
-            }),
-          }
+        ? (() => {
+            const schedule = foodDealScheduleFromPayload(payload);
+            const timeZone = row.timezone ?? "America/Los_Angeles";
+            const next = schedule
+              ? nextFoodDealOccurrence(schedule, new Date(), timeZone)
+              : null;
+            return {
+              ...row,
+              ...(next
+                ? { startsAt: next.startsAt, endsAt: next.endsAt }
+                : null),
+              imageUrl: resolveFoodDealImageUrl({
+                imageUrl: row.imageUrl,
+                dealId:
+                  typeof payload?.dealId === "string" ? payload.dealId : null,
+                title: row.title,
+                dealSummary: [
+                  typeof payload?.dealSummary === "string"
+                    ? payload.dealSummary
+                    : "",
+                  row.description ?? "",
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+                dealKind:
+                  typeof payload?.dealKind === "string"
+                    ? payload.dealKind
+                    : null,
+              }),
+            };
+          })()
         : row;
   const coords = resolveEventCoords({
     lat: withImage.lat,

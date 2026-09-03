@@ -154,6 +154,20 @@ Each run drains pending admin `ingest_jobs` first (`--jobs`), then exits. Local 
 
 One-time setup: `bash scripts/railway-ingest-cron-setup.sh` (creates services, copies ingest vars, sleeps legacy `ingest` worker if present).
 
+## Ship checklist (multi-agent → prod)
+
+After feature work on local (especially DB / ingest / feed contracts), **do not** assume a web push or Railway Redeploy is enough. Follow **[Ship checklist](./ship-checklist.md)**:
+
+1. Rebuild **api + web + ingest-*** (not Redeploy)
+2. Confirm migrations applied
+3. Sync secrets (IG token → env **and** `app_settings`)
+4. One-shot any adapters you ran only locally (`instagram`, `youtube`, …)
+5. Smoke `videos=only` + `/media/stream`
+
+```bash
+pnpm ship:preflight   # local vs prod source counts + migration hints
+```
+
 ## Go-live data hygiene
 
 Data-model cleanup (durable schedules, GC, coalesce) is tracked in [productionize.md](./productionize.md). Prefer a clean migrate + Phase 1 ingest on a fresh Railway DB rather than copying a messy local dump.

@@ -11,6 +11,7 @@
 | [Ingest](./ingest.md) | Source adapters, schedules, env keys; **category mapping**, soft coalesce, **long-running exhibitions** |
 | [Productionize](./productionize.md) | Go-live cleanup: durable schedules, ingest GC, coalesce orphans |
 | [Deploy](./deploy.md) | **Railway production**: Postgres, API, web, ingest, env vars |
+| [Ship checklist](./ship-checklist.md) | **Prod like local**: rebuild, migrate, secrets, re-ingest, smoke |
 | [Ranking](./ranking.md) | Feed modes, areas, affinity / serendipity |
 | [Data model](./data-model.md) | Postgres tables and normalized shapes |
 | [Monetization](./monetization.md) | Affiliates, local sponsors, ads, marketing roadmap |

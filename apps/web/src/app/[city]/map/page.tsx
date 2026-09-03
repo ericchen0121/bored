@@ -48,7 +48,14 @@ import {
   rememberFeedPrefs,
   type FeedArea,
 } from "@/lib/feed-prefs";
-import { fetchFeedCached, peekFeedCache } from "@/lib/feed-cache";
+import {
+  FEED_ALL_EVENTS_LIMIT,
+  FEED_MAP_TOPUP_LIMIT,
+  feedAllEventsParams,
+  fetchFeedCached,
+  mergeFeedCardsById,
+  peekFeedCache,
+} from "@/lib/feed-cache";
 import { useSourcesViewEnabled } from "@/lib/dev-flags";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNow } from "@/hooks/useNow";
@@ -222,40 +229,67 @@ function CityMapPage({ city }: { city: FeedCity }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [city, searchParams, sourcesViewEnabled]);
 
+  // Paint from home All-events cache when possible; top up only if that set looks capped.
+  // Topics stay client-side (see feedMapHref) so chip toggles don't refetch.
   useEffect(() => {
     if (!prefsHydrated) return;
     let cancelled = false;
-    const params = new URLSearchParams({
-      mode,
-      area,
-      limit: "500",
-    });
-    if (sources.length) params.set("sources", sources.join(","));
-    if (topics.length) params.set("topics", topics.join(","));
     const effectiveDate =
       mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
-    if (effectiveDate) params.set("date", effectiveDate);
+    const primary = feedAllEventsParams({
+      mode,
+      area,
+      sources,
+      date: effectiveDate,
+      limit: FEED_ALL_EVENTS_LIMIT,
+    });
 
-    const cached = peekFeedCache(params);
-    if (cached) setCards(cached);
-    setLoading(true);
+    const cached = peekFeedCache(primary);
+    if (cached?.length) {
+      setCards(cached);
+      // Soft refresh only when we may still need a denser top-up.
+      setLoading(cached.length >= FEED_ALL_EVENTS_LIMIT);
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
-    void fetchFeedCached(params)
-      .then((data) => {
+    void (async () => {
+      try {
+        const { cards: primaryCards } = await fetchFeedCached(primary);
         if (cancelled) return;
-        setCards(data.cards);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
+        setCards(primaryCards);
+
+        if (primaryCards.length < FEED_ALL_EVENTS_LIMIT) {
+          setLoading(false);
+          return;
+        }
+
+        setLoading(true);
+        const topUp = feedAllEventsParams({
+          mode,
+          area,
+          sources,
+          date: effectiveDate,
+          limit: FEED_MAP_TOPUP_LIMIT,
+        });
+        const { cards: more } = await fetchFeedCached(topUp);
+        if (cancelled) return;
+        setCards(mergeFeedCardsById(primaryCards, more));
+      } catch (err) {
+        if (cancelled) return;
+        if (!cached?.length) {
+          setError(err instanceof Error ? err.message : "Failed to load feed");
+        }
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [prefsHydrated, mode, area, sources, topics, date, timeZone]);
+  }, [prefsHydrated, mode, area, sources, date, timeZone]);
 
   // Calendar dots for the date picker (overview horizon).
   useEffect(() => {

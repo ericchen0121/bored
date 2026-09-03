@@ -17,7 +17,7 @@ const AI_CRAWLERS = [
 
 export default function robots(): MetadataRoute.Robots {
   const base = siteUrl();
-  const disallow = ["/admin/", "/onboarding/", "/auth/", "/saved"];
+  const disallow = ["/admin/", "/onboarding/", "/auth/", "/saved", "/account"];
 
   return {
     rules: [

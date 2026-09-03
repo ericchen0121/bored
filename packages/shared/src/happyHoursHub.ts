@@ -1,4 +1,4 @@
-import { dayKey, fromZonedTime } from "./datetime";
+import { dayKey, fromZonedTime, zonedWeekday } from "./datetime";
 import {
   CURATED_FOOD_DEALS,
   type CuratedFoodDeal,
@@ -48,23 +48,6 @@ export function isHappyHoursHubCard(
     card.id === HAPPY_HOURS_HUB_CARD_ID ||
     ("source" in card && card.source === HAPPY_HOURS_HUB_SOURCE)
   );
-}
-
-function zonedWeekday(now: Date, timeZone: string): FoodDealWeekday {
-  const short = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-  }).format(now);
-  const map: Record<string, FoodDealWeekday> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  };
-  return map[short] ?? 0;
 }
 
 function dealsForCity(city: FeedCity): CuratedFoodDeal[] {

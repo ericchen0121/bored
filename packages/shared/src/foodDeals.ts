@@ -6,6 +6,13 @@
  * deals have real day/time windows.
  */
 
+import {
+  addCalendarDays,
+  dayKey,
+  fromZonedTime,
+  zonedWeekday,
+} from "./datetime";
+
 export type FoodDealKind = "happy_hour" | "lunch";
 
 export type FoodDealWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sun–Sat
@@ -1014,13 +1021,18 @@ export function isFoodDealSource(source: string | null | undefined): boolean {
   return source === "food_deals";
 }
 
+const MS_PER_DAY = 86400000;
+
 /** Match weekday against schedule (empty weekdays = every day). */
 export function foodDealMatchesWeekday(
   schedule: FoodDealSchedule,
-  day: Date,
+  yyyyMmDd: string,
+  timeZone: string,
 ): boolean {
   if (!schedule.weekdays.length) return true;
-  return schedule.weekdays.includes(day.getDay() as FoodDealWeekday);
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  const noon = fromZonedTime(y!, m!, d!, 12, 0, 0, timeZone);
+  return schedule.weekdays.includes(zonedWeekday(noon, timeZone));
 }
 
 export type FoodDealOccurrence = {
@@ -1028,15 +1040,37 @@ export type FoodDealOccurrence = {
   endsAt: Date;
 };
 
-/** Build start/end on a calendar day from schedule hours (local wall clock). */
+/**
+ * Build start/end on a calendar day from schedule hours in `timeZone`
+ * (wall clock — never process-local `setHours`).
+ */
 export function foodDealTimesOnDay(
   schedule: FoodDealSchedule,
-  day: Date,
+  yyyyMmDd: string,
+  timeZone: string,
 ): FoodDealOccurrence {
-  const startsAt = new Date(day);
-  startsAt.setHours(schedule.startHour, schedule.startMinute, 0, 0);
-  const endsAt = new Date(day);
-  endsAt.setHours(schedule.endHour, schedule.endMinute, 0, 0);
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  const startsAt = fromZonedTime(
+    y!,
+    m!,
+    d!,
+    schedule.startHour,
+    schedule.startMinute,
+    0,
+    timeZone,
+  );
+  let endsAt = fromZonedTime(
+    y!,
+    m!,
+    d!,
+    schedule.endHour,
+    schedule.endMinute,
+    0,
+    timeZone,
+  );
+  if (endsAt.getTime() <= startsAt.getTime()) {
+    endsAt = new Date(endsAt.getTime() + MS_PER_DAY);
+  }
   return { startsAt, endsAt };
 }
 
@@ -1047,14 +1081,14 @@ export function foodDealTimesOnDay(
 export function nextFoodDealOccurrence(
   schedule: FoodDealSchedule,
   now: Date,
+  timeZone: string,
   horizonDays = 28,
 ): FoodDealOccurrence | null {
+  const today = dayKey(now, timeZone);
   for (let d = 0; d < horizonDays; d++) {
-    const day = new Date(now);
-    day.setHours(0, 0, 0, 0);
-    day.setDate(day.getDate() + d);
-    if (!foodDealMatchesWeekday(schedule, day)) continue;
-    const occ = foodDealTimesOnDay(schedule, day);
+    const key = addCalendarDays(today, d);
+    if (!foodDealMatchesWeekday(schedule, key, timeZone)) continue;
+    const occ = foodDealTimesOnDay(schedule, key, timeZone);
     if (occ.endsAt.getTime() < now.getTime() - 3600000) continue;
     return occ;
   }
@@ -1069,17 +1103,18 @@ export function expandFoodDealOccurrences(
   schedule: FoodDealSchedule,
   windowStart: Date,
   windowEnd: Date,
+  timeZone: string,
 ): FoodDealOccurrence[] {
   const out: FoodDealOccurrence[] = [];
-  const day = new Date(windowStart);
-  day.setHours(0, 0, 0, 0);
+  let key = dayKey(windowStart, timeZone);
+  const endKey = dayKey(windowEnd, timeZone);
   const endMs = windowEnd.getTime();
   // Cap expansion so a huge "all" window can't explode
   const maxDays = 31;
   for (let i = 0; i < maxDays; i++) {
-    if (day.getTime() > endMs) break;
-    if (foodDealMatchesWeekday(schedule, day)) {
-      const occ = foodDealTimesOnDay(schedule, day);
+    if (key > endKey) break;
+    if (foodDealMatchesWeekday(schedule, key, timeZone)) {
+      const occ = foodDealTimesOnDay(schedule, key, timeZone);
       if (
         occ.startsAt.getTime() >= windowStart.getTime() &&
         occ.startsAt.getTime() <= endMs
@@ -1087,7 +1122,7 @@ export function expandFoodDealOccurrences(
         out.push(occ);
       }
     }
-    day.setDate(day.getDate() + 1);
+    key = addCalendarDays(key, 1);
   }
   return out;
 }
@@ -1157,6 +1192,7 @@ export function expandFoodDealRowsForFeed<
     source: string;
     startsAt: Date;
     endsAt?: Date | null;
+    timezone?: string | null;
     rawPayload?: unknown;
   },
 >(
@@ -1176,8 +1212,18 @@ export function expandFoodDealRowsForFeed<
     const payload =
       (row.rawPayload as Record<string, unknown> | null | undefined) ?? null;
     const schedule = foodDealScheduleFromPayload(payload);
-    if (!schedule || opts.mode === "for_you") {
+    const timeZone = row.timezone ?? "America/Los_Angeles";
+    if (!schedule) {
       out.push(row);
+      continue;
+    }
+    if (opts.mode === "for_you") {
+      const next = nextFoodDealOccurrence(schedule, new Date(), timeZone);
+      out.push(
+        next
+          ? { ...row, startsAt: next.startsAt, endsAt: next.endsAt }
+          : row,
+      );
       continue;
     }
 
@@ -1185,6 +1231,7 @@ export function expandFoodDealRowsForFeed<
       schedule,
       opts.windowStart,
       opts.windowEnd,
+      timeZone,
     );
     if (!occurrences.length) continue;
 

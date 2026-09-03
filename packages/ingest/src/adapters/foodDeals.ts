@@ -55,10 +55,9 @@ export function materializeDeal(
   deal: CuratedFoodDeal,
   now: Date,
 ): NormalizedEvent | null {
-  const next = nextFoodDealOccurrence(deal.schedule, now, 28);
-  if (!next) return null;
-
   const timezone = timezoneForCity(deal.city);
+  const next = nextFoodDealOccurrence(deal.schedule, now, timezone, 28);
+  if (!next) return null;
   const sourceEventId = foodDealSourceEventId(deal.id);
   const imageUrl = curatedFoodDealImageUrl({
     dealId: deal.id,

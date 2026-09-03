@@ -40,6 +40,27 @@ export function dayKey(iso: string | Date, timeZone: string): string {
   }).format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+/** Weekday 0=Sun … 6=Sat in the given IANA timezone (not process-local). */
+export function zonedWeekday(
+  iso: string | Date,
+  timeZone: string,
+): 0 | 1 | 2 | 3 | 4 | 5 | 6 {
+  const short = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+  }).format(typeof iso === "string" ? new Date(iso) : iso);
+  const map: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  return map[short] ?? 0;
+}
+
 /** Add (or subtract) whole calendar days to a `YYYY-MM-DD` key. */
 export function addCalendarDays(yyyyMmDd: string, delta: number): string {
   const [y, m, d] = yyyyMmDd.split("-").map(Number);

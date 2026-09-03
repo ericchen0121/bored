@@ -21,10 +21,52 @@ import {
 } from "@/lib/feed-prefs";
 import { isSourcesViewEnabled } from "@/lib/dev-flags";
 
+function TastesIcon() {
+  return (
+    <svg
+      className="site-header__action-icon"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="12" r="3.25" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function AccountIcon() {
+  return (
+    <svg
+      className="site-header__action-icon"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      aria-hidden
+    >
+      <circle cx="12" cy="8" r="3.25" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M5.5 19.5c1.6-3 3.9-4.5 6.5-4.5s4.9 1.5 6.5 4.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
-  const { authenticated, user, signOut, onboardingComplete } = useUser();
+  const { authenticated, onboardingComplete } = useUser();
   const [fallbackCity, setFallbackCity] = useState<FeedCity>("sf");
 
   const pathSegment = pathname.split("/").filter(Boolean)[0];
@@ -70,6 +112,8 @@ export function SiteHeader() {
     router.push(feedHomeHref());
   }
 
+  const tastesLabel = onboardingComplete ? "Edit tastes" : "Set tastes";
+
   return (
     <header className="site-header">
       <Link
@@ -87,21 +131,27 @@ export function SiteHeader() {
         />
         <Link
           href="/onboarding"
-          className="site-header__tastes"
+          className={`site-header__icon-btn${
+            pathname.startsWith("/onboarding") ? " is-active" : ""
+          }`}
+          aria-label={tastesLabel}
+          title={tastesLabel}
           onClick={() =>
             trackTastesOpened({ onboarding_complete: onboardingComplete })
           }
         >
-          {onboardingComplete ? "Edit tastes" : "Set tastes"}
+          <TastesIcon />
         </Link>
         <Link
           href="/saved"
-          className={`site-header__saved${pathname.startsWith("/saved") ? " is-active" : ""}`}
+          className={`site-header__icon-btn${
+            pathname.startsWith("/saved") ? " is-active" : ""
+          }`}
           aria-label="Saved"
           title="Saved"
         >
           <svg
-            className="site-header__saved-icon"
+            className="site-header__action-icon site-header__saved-icon"
             viewBox="0 0 24 24"
             width="20"
             height="20"
@@ -117,16 +167,16 @@ export function SiteHeader() {
             />
           </svg>
         </Link>
-        {authenticated && user?.email ? (
-          <button
-            type="button"
-            className="site-header__account"
-            title={user.email}
-            onClick={() => void signOut()}
-          >
-            Sign out
-          </button>
-        ) : null}
+        <Link
+          href="/account"
+          className={`site-header__icon-btn${
+            pathname.startsWith("/account") ? " is-active" : ""
+          }`}
+          aria-label={authenticated ? "Account" : "Sign in"}
+          title={authenticated ? "Account" : "Sign in"}
+        >
+          <AccountIcon />
+        </Link>
       </div>
     </header>
   );

@@ -1,0 +1,23 @@
+---
+description: When shipping to Railway prod — rebuild, migrate, sync secrets, re-ingest; never assume local DB equals prod
+alwaysApply: true
+---
+
+# Ship to prod
+
+When the user wants prod to match local after multi-agent / feature work, follow [docs/ship-checklist.md](docs/ship-checklist.md).
+
+## Hard rules
+
+- **Do not** `pg_dump` / copy local Postgres to Railway as the default.
+- **Do not** Railway **Redeploy** after code changes — **rebuild** with `railway up --service api|web|ingest-*`.
+- **Ship skewed services together** (api + web + ingest) when schema, feed contracts (`videos=`, media proxy), or adapters changed.
+- Local-only ingest (e.g. `pnpm ingest:once -- --only=instagram`) **must** be re-run on prod (via `railway ssh -s api`, not `railway run` — internal DB host).
+- Renewed secrets (esp. `IG_ACCESS_TOKEN`) → Railway env on **api + ingest-*** **and** prod `app_settings`.
+
+## Before calling prod “done”
+
+1. Classify changes: schema / API contract / web / ingest / secrets / local-only data.
+2. Rebuild → confirm migrate on API boot → sync secrets → one-shot missing adapters.
+3. Smoke: `/health`, `videos=only` returns IG/YT (not Eventbrite), `/media/stream` is `video/mp4`.
+4. Optional: `pnpm ship:preflight`.

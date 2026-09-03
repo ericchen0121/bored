@@ -64,7 +64,11 @@ export const recurringComedyAdapter: SourceAdapter = {
         hour: show.hour,
         minute: show.minute,
       };
-      const next = nextRecurringOccurrence(schedule, now);
+      const next = nextRecurringOccurrence(
+        schedule,
+        now,
+        timezoneForCity(show.city),
+      );
       if (!next) continue;
 
       const city = show.city ?? "sf";
