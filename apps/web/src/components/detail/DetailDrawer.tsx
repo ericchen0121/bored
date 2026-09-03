@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FeedCard } from "@bored/shared";
 import { primaryEventType } from "@bored/shared";
-import { api } from "@/lib/api";
+import { api, recordFeedSignal } from "@/lib/api";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSwipeToDismiss } from "@/hooks/useSwipeToDismiss";
 import { EventDetailContent } from "./EventDetailContent";
@@ -22,22 +22,29 @@ export function DetailDrawer({
   selection,
   onClose,
   reelPlaylist = [],
+  onReelsWatched,
 }: {
   selection: DetailSelection;
   onClose: () => void;
   reelPlaylist?: FeedCard[];
+  /** Fired once on close with every reel id played this session. */
+  onReelsWatched?: (ids: string[]) => void;
 }) {
   const titleId = useId();
   const panelRef = useRef<HTMLElement | null>(null);
   const backdropRef = useRef<HTMLButtonElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const closingRef = useRef(false);
+  const watchedReelIdsRef = useRef<Set<string>>(new Set());
   const isMobile = useMediaQuery("(max-width: 899px)");
 
-  const reelCards =
-    selection.kind === "event"
-      ? reelPlaylist.filter((c) => c.kind !== "movie_showtime")
-      : [];
+  const reelCards = useMemo(
+    () =>
+      selection.kind === "event"
+        ? reelPlaylist.filter((c) => c.kind !== "movie_showtime")
+        : [],
+    [selection.kind, reelPlaylist],
+  );
   const reelIndex = reelCards.findIndex((c) => c.id === selection.id);
   const isReelPlayer = reelIndex >= 0;
 
@@ -46,11 +53,41 @@ export function DetailDrawer({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Seed the session with the opened reel; swipe adds more via onActiveId.
+  useEffect(() => {
+    if (!isReelPlayer) {
+      watchedReelIdsRef.current = new Set();
+      return;
+    }
+    watchedReelIdsRef.current = new Set([selection.id]);
+    // Ensure deep links / non-feed opens still soft-hide on the server.
+    recordFeedSignal({
+      targetKind: "event",
+      targetId: selection.id,
+      type: "opened",
+    });
+  }, [isReelPlayer, selection.id]);
+
+  const markReelOpened = useCallback((id: string) => {
+    watchedReelIdsRef.current.add(id);
+    recordFeedSignal({
+      targetKind: "event",
+      targetId: id,
+      type: "opened",
+    });
+  }, []);
+
   const finishClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
+    const watched =
+      isReelPlayer && watchedReelIdsRef.current.size > 0
+        ? Array.from(watchedReelIdsRef.current)
+        : [];
+    // Close first so the parent clears selection before carousel filtering.
     onClose();
-  }, [onClose]);
+    if (watched.length) onReelsWatched?.(watched);
+  }, [onClose, onReelsWatched, isReelPlayer]);
 
   useEffect(() => {
     if (isReelPlayer) {
@@ -222,7 +259,11 @@ export function DetailDrawer({
         </div>
 
         {isReelPlayer ? (
-          <ReelsPlayer cards={reelCards} initialId={selection.id} />
+          <ReelsPlayer
+            cards={reelCards}
+            initialId={selection.id}
+            onActiveId={markReelOpened}
+          />
         ) : (
           <div
             ref={scrollRef}

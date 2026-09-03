@@ -175,6 +175,11 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const [prefsHydrated, setPrefsHydrated] = useState(() =>
     searchParams.has("mode"),
   );
+  /** Session soft-hide for reels opened in the player (survives cache peeks). */
+  const hiddenReelIdsRef = useRef(new Set<string>());
+  const [hiddenReelIds, setHiddenReelIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const lastFeedRefreshKey = useRef<number | null>(null);
 
   const { ready: userReady, authenticated, onboardingComplete } = useUser();
@@ -263,6 +268,47 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const closeDetail = useCallback(() => {
     syncUrl(mode, area, sources, date, null);
   }, [syncUrl, mode, area, sources, date]);
+
+  const onReelsWatched = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      for (const id of ids) hiddenReelIdsRef.current.add(id);
+      setHiddenReelIds(new Set(hiddenReelIdsRef.current));
+
+      // Progressive Today / For you path: refill the carousel in the background.
+      const splitVideos =
+        (mode === "today" || mode === "for_you") &&
+        !sources.includes("instagram") &&
+        !sources.includes("youtube");
+      if (!splitVideos) return;
+
+      const effectiveDate =
+        mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
+      const limit =
+        mode === "date" || effectiveDate || sources.length ? 200 : 40;
+      const params = new URLSearchParams({
+        mode,
+        area,
+        limit: String(limit),
+      });
+      if (sources.length) params.set("sources", sources.join(","));
+      if (topics.length) params.set("topics", topics.join(","));
+      if (effectiveDate) params.set("date", effectiveDate);
+
+      void fetchFeedCached(feedParamsWithVideos(params, "only"), {
+        force: true,
+      })
+        .then((data) => {
+          setVideoCards(
+            data.cards.filter((c) => !hiddenReelIdsRef.current.has(c.id)),
+          );
+        })
+        .catch(() => {
+          /* keep the client-filtered list */
+        });
+    },
+    [mode, area, sources, topics, date, timeZone],
+  );
 
   const selectMode = useCallback(
     (nextMode: FeedMode) => {
@@ -716,7 +762,15 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     [cards, city, now, timeZone, mode, topics, browsingToday],
   );
 
-  const movies = displayCards.filter((c) => c.kind === "movie_showtime");
+  /** Main feed / carousel: drop reels opened this session. */
+  const visibleDisplayCards = useMemo(() => {
+    if (hiddenReelIds.size === 0) return displayCards;
+    return displayCards.filter(
+      (c) => !(isFeedVideoCard(c) && hiddenReelIds.has(c.id)),
+    );
+  }, [displayCards, hiddenReelIds]);
+
+  const movies = visibleDisplayCards.filter((c) => c.kind === "movie_showtime");
 
   const splitVideosActive =
     (mode === "for_you" || mode === "today") &&
@@ -724,16 +778,25 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     !sources.includes("youtube");
 
   const { videos: partitionedReels, rest: cardsWithoutReels } = useMemo(
-    () => partitionFeedVideoCards(displayCards),
-    [displayCards],
+    () => partitionFeedVideoCards(visibleDisplayCards),
+    [visibleDisplayCards],
   );
-  const reelCards = splitVideosActive ? videoCards : partitionedReels;
+  /** Unfiltered playlist for the open player (hide applies after close). */
+  const reelPlaylist = useMemo(() => {
+    if (splitVideosActive) return videoCards;
+    return partitionFeedVideoCards(displayCards).videos;
+  }, [splitVideosActive, videoCards, displayCards]);
+  const visibleVideoCards = useMemo(() => {
+    if (hiddenReelIds.size === 0) return videoCards;
+    return videoCards.filter((c) => !hiddenReelIds.has(c.id));
+  }, [videoCards, hiddenReelIds]);
+  const reelCards = splitVideosActive ? visibleVideoCards : partitionedReels;
   const showReelsCarousel =
     (mode === "for_you" || mode === "today") && feedView !== "reels";
   const feedCards = feedView === "reels"
     ? splitVideosActive
-      ? videoCards
-      : displayCards
+      ? visibleVideoCards
+      : visibleDisplayCards
     : cardsWithoutReels;
 
   // Movies near you only when the Movies topic is on — don't lead For you /
@@ -1126,7 +1189,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         <DetailDrawer
           selection={selection}
           onClose={closeDetail}
-          reelPlaylist={reelCards}
+          reelPlaylist={reelPlaylist}
+          onReelsWatched={onReelsWatched}
         />
       )}
     </div>

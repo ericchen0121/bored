@@ -310,6 +310,11 @@ export function ReelsPlayer({
   const onActiveIdRef = useRef(onActiveId);
   onActiveIdRef.current = onActiveId;
   const animatingRef = useRef(false);
+  const snapTimeoutRef = useRef<number | null>(null);
+  /** Stable id of the reel the user is watching — survives playlist refreshes. */
+  const activeIdRef = useRef(
+    cards.find((c) => c.id === initialId)?.id ?? cards[0]?.id ?? initialId,
+  );
   const swipeRef = useRef<{
     pointerId: number;
     startY: number;
@@ -347,12 +352,20 @@ export function ReelsPlayer({
       }
     }
 
+    const nextId = list[next]!.id;
+    activeIdRef.current = nextId;
     activeIndexRef.current = next;
     setActiveIndex(next);
-    onActiveIdRef.current?.(list[next]!.id);
+    onActiveIdRef.current?.(nextId);
     animatingRef.current = true;
     scrollToIndex(next);
-    window.setTimeout(() => {
+    if (snapTimeoutRef.current != null) {
+      window.clearTimeout(snapTimeoutRef.current);
+    }
+    snapTimeoutRef.current = window.setTimeout(() => {
+      snapTimeoutRef.current = null;
+      // Ignore stale snaps from a prior advance the user already left.
+      if (activeIndexRef.current !== next) return;
       animatingRef.current = false;
       // Snap again in case layout shifted; keep only the active clip alive.
       scrollToIndex(next, "auto");
@@ -377,14 +390,41 @@ export function ReelsPlayer({
     setInfoOpen(false);
   }, [activeIndex]);
 
+  // Jump only when the opened selection changes — not when the playlist
+  // array identity refreshes (parent re-render / progressive video fetch).
   useEffect(() => {
-    const i = cards.findIndex((c) => c.id === initialId);
+    const i = cardsRef.current.findIndex((c) => c.id === initialId);
     if (i < 0) return;
+    activeIdRef.current = initialId;
     activeIndexRef.current = i;
     setActiveIndex(i);
-    // Instant jump when opening / changing selection — no fling.
     requestAnimationFrame(() => scrollToIndex(i, "auto"));
-  }, [initialId, cards]);
+  }, [initialId]);
+
+  // Playlist grew/reordered: keep the watched reel by id, never snap to initialId.
+  useEffect(() => {
+    const list = cards;
+    const keepId = activeIdRef.current;
+    let i = list.findIndex((c) => c.id === keepId);
+    if (i < 0) {
+      i = list.findIndex((c) => c.id === initialId);
+      if (i < 0) i = Math.min(activeIndexRef.current, Math.max(0, list.length - 1));
+      if (i >= 0 && list[i]) activeIdRef.current = list[i]!.id;
+    }
+    if (i < 0) return;
+    if (i === activeIndexRef.current) return;
+    activeIndexRef.current = i;
+    setActiveIndex(i);
+    requestAnimationFrame(() => scrollToIndex(i, "auto"));
+  }, [cards, initialId]);
+
+  useEffect(() => {
+    return () => {
+      if (snapTimeoutRef.current != null) {
+        window.clearTimeout(snapTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // One-step navigation only: wheel / keys / swipe never skip slides.
   useEffect(() => {
