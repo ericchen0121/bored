@@ -1,14 +1,18 @@
 import { isEvergreenRecommendationSource } from "./activityTips";
+import { isMusicFestivalSource } from "./musicFestivalTips";
 import { eventInArea, type FeedArea } from "./taxonomy";
 
 /** Curated tips — fetched outside the timed startsAt window. */
 export const CURATED_FEED_SOURCE_IDS = [
   "activities",
+  "theater",
   "food",
   "food_deals",
   "new_restaurants",
   "instagram",
+  "youtube",
   "recurring",
+  "music_festival",
 ] as const;
 
 /**
@@ -18,9 +22,11 @@ export const CURATED_FEED_SOURCE_IDS = [
 export const CURATED_ONLY_TIMED_SOURCES = [
   "food",
   "activities",
+  "theater",
   "new_restaurants",
   "food_deals",
   "recurring",
+  "music_festival",
 ] as const;
 
 /** Drop evergreen tips not refreshed by ingest within this window. */
@@ -33,6 +39,8 @@ export type CuratedFeedRowLike = {
   neighborhood?: string | null;
   categories?: string[] | null;
   lastSeenAt?: Date | string | null;
+  startsAt?: Date | string | null;
+  endsAt?: Date | string | null;
 };
 
 /** Scope curated rows to the requested metro and hide stale evergreen tips. */
@@ -53,6 +61,11 @@ export function filterCuratedFeedRows<T extends CuratedFeedRowLike>(
       })
     ) {
       return false;
+    }
+    if (isMusicFestivalSource(row.source)) {
+      const endsAt = row.endsAt ? new Date(row.endsAt) : null;
+      if (endsAt && endsAt.getTime() < now.getTime()) return false;
+      return true;
     }
     if (
       isEvergreenRecommendationSource(row.source, row.categories, row.kind)

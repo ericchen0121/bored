@@ -45,6 +45,8 @@ Adjacent map examples:
 |---|---|
 | `saved` / `going` | Boost |
 | `dismissed` | Hard exclude |
+| `impressed` (reels) | Soft-hide from video carousel for **7 days** (cover on screen ≥ ~600ms) |
+| `opened` (reels) | Soft-hide from video carousel for **21 days** (tapped into player) |
 | Neighborhood match | Small boost |
 | Distance within radius | Soft score |
 | `preferFree` / `budgetEnabled` + `budgetTier` ($–$$$$) | Hard filter when enabled (not in Today / Select Date / topic browse) |
@@ -52,6 +54,22 @@ Adjacent map examples:
 | Exhibition (`tags` / `rawPayload.exhibition`) | Mild score penalty; no live boost; midday sort slot on day browse |
 | **Sponsored** (`isSponsored`) | Separated from organic ranking, then **injected** at capped intervals (see below) |
 | **Demotion rules** | Score × multiplier + optional max cards per venue (see below) |
+
+## Reels & shorts carousel
+
+Video cards (Instagram reels + YouTube Shorts) are ranked separately from the event timeline via `rankVideoCarousel` in `packages/shared/src/videoRanker.ts`, then prepended to the feed (client splits them into the homepage strip).
+
+| Rule | Value |
+|---|---|
+| Primary sort | `publishedAt` desc (IG/YouTube publish time) |
+| Tip age gate | Recommendation tips older than **30 days** publish age are dropped |
+| `impressed` | Exclude for 7 days (relax if carousel would have &lt; 12) |
+| `opened` | Exclude for 21 days (relax after impress fallback) |
+| `dismissed` | Never resurrect |
+| Creator cap | Prefer ≤2 tiles per IG handle / YT channel, then fill |
+| Limit | 40 on personalized modes; Today shared cache stores an 80-card pool and `overlayTodayFeedForUser` personalizes down to 40 |
+
+Ingest skips emitting tip rows older than 30 days (`VIDEO_TIP_MAX_AGE_MS`). GC deletes `impressed` / `opened` signal rows past the 21-day opened TTL so the table stays bounded.
 
 ## Feed demotion rules
 

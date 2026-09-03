@@ -148,9 +148,11 @@ export function isEvergreenRecommendationSource(
 ): boolean {
   if (kind === "recommendation") return true;
   if (source === "activities") return true;
+  if (source === "theater") return true;
   if (source === "new_restaurants") return true;
   if (source === "food") return true;
   if (source === "instagram" && categories?.includes("food")) return true;
+  if (source === "youtube" && categories?.includes("food")) return true;
   return false;
 }
 

@@ -29,6 +29,27 @@
       "when": 1788050000000,
       "tag": "0003_budget_tier",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788400000000,
+      "tag": "0004_app_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788401000000,
+      "tag": "0005_ig_creators",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788402000000,
+      "tag": "0006_ig_creator_scrapes",
+      "breakpoints": true
     }
   ]
 }

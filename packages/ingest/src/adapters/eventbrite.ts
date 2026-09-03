@@ -315,6 +315,8 @@ export const eventbriteAdapter = createEventbriteAdapter({
     "ca--oakland",
     "ca--san-jose",
     "ca--berkeley",
+    "ca--alameda",
+    "ca--san-rafael",
   ],
   categorySlug: "all-events",
   fallbackTimezone: "America/Los_Angeles",

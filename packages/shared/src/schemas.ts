@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  COMEDY_SUBTYPES,
+  RECURRING_CATEGORIES,
   EVENT_SOURCES,
   FEED_CITIES,
   FEED_KINDS,
@@ -178,6 +178,11 @@ export const FeedQuerySchema = z.object({
     .optional(),
   /** Select-date overview / calendar meta needs a wide window (web uses 500). */
   limit: z.coerce.number().min(1).max(500).default(40),
+  /**
+   * Progressive feed: `exclude` = events only (fast paint), `only` = reels/shorts
+   * carousel pool, `include` = both (default, back-compat / map).
+   */
+  videos: z.enum(["include", "exclude", "only"]).default("include"),
 });
 
 export const FeedCardSchema = z.object({
@@ -227,6 +232,12 @@ export const FeedCardSchema = z.object({
     .optional(),
   /** Extra times beyond showtimesPreview (full list on event details). */
   showtimesMoreCount: z.number().int().nonnegative().optional(),
+  /** Native video URL when source is Instagram / YouTube (reels + shorts). */
+  mediaUrl: z.string().nullable().optional(),
+  /** REELS, VIDEO, or SHORT — drives reels layout + embeds. */
+  mediaType: z.string().nullable().optional(),
+  /** Source publish time (IG/YouTube) — prefer over startsAt for tip “posted” UI. */
+  publishedAt: z.string().datetime().nullable().optional(),
 });
 
 export const RecurringShowSchema = z.object({
@@ -240,7 +251,8 @@ export const RecurringShowSchema = z.object({
   hour: z.number(),
   minute: z.number(),
   priceHint: z.string().nullable(),
-  comedySubtype: z.enum(COMEDY_SUBTYPES),
+  /** Interest category — comedy.* or music.* (DB column still `comedy_subtype`). */
+  comedySubtype: z.enum(RECURRING_CATEGORIES),
   sourceUrl: z.string().nullable(),
   trustWeight: z.number(),
   active: z.boolean(),

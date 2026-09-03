@@ -24,6 +24,9 @@ pnpm ingest
 | Route | Purpose |
 |---|---|
 | `/admin` | Ingest adapters, last-run status, static schedule view, enqueue Phase 1 / all / single adapter |
+| `/admin/instagram` | IG creators by metro — look up handles, add/disable scrape targets |
+| `/admin/instagram/token` | Instagram Graph token status (expiry) + renew; stores refreshed token in DB |
+| `/admin/deploys` | Railway service deploy status + links to the project dashboard |
 | `/admin/listings` | Search listings, tag coverage by source |
 | `/admin/listings/:id` | Edit title/description/tags/categories/URLs, hide, attach sponsor boost |
 | `/admin/demotions` | Feed demotion rules (create/edit, score bury + per-venue cap, venue typeahead) |
@@ -42,6 +45,31 @@ Static cron metadata is read-only in MVP (see `packages/ingest/src/schedules.ts`
 Send `Authorization: Bearer <ADMIN_TOKEN>` (or `X-Admin-Token`). Web stores the token in `sessionStorage` / `localStorage` after login.
 
 If `ADMIN_TOKEN` is unset, admin APIs return **503**.
+
+## Railway deploys
+
+`GET /v1/admin/deploys` proxies the Railway GraphQL API (latest deploy per service + recent history).
+
+| Env | Notes |
+|---|---|
+| `RAILWAY_PROJECT_TOKEN` | Preferred. Project token (Project settings → Tokens). Required on the **api** service in production. |
+| `RAILWAY_API_TOKEN` | Account/workspace token alternative. Locally, `railway login` is enough (reads `~/.railway/config.json`). |
+| `RAILWAY_PROJECT_ID` | Optional; defaults to the Bored project. Injected automatically when the API runs on Railway. |
+| `RAILWAY_ENVIRONMENT_ID` | Optional; defaults to `production`. |
+
+The Deploys admin screen links each service to `railway.com/project/...`.
+
+## Instagram token
+
+| Env | Notes |
+|---|---|
+| `IG_ACCESS_TOKEN` | Bootstrap long-lived user token (Graph Explorer short-lived tokens expire in hours). |
+| `IG_BUSINESS_USER_ID` | IG professional account id used for business discovery. |
+| `META_APP_ID` / `META_APP_SECRET` | Same Meta app as Graph Explorer. Required to **inspect expiry** and **renew**. |
+
+Renewed tokens are written to `app_settings` (`ig_access_token`) so API + ingest both pick them up without editing Railway env every time. Ingest also auto-renews when fewer than 14 days remain.
+
+**Preferred ops path:** on `/admin/instagram/token`, paste a fresh Graph Explorer short-lived user token → **Exchange & save**. The API uses `META_APP_ID` / `META_APP_SECRET` server-side; the long-lived token is stored in DB and never needs to live in `.env` after that. Admin-gated only — do not log the pasted token.
 
 ## Schema notes
 

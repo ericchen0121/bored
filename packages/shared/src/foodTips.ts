@@ -197,6 +197,7 @@ export function isFoodRecommendationSource(
 ): boolean {
   if (source === "food") return true;
   if (source === "instagram" && categories?.includes("food")) return true;
+  if (source === "youtube" && categories?.includes("food")) return true;
   return false;
 }
 
@@ -248,6 +249,13 @@ export function matchesSourceFilter(
   if (
     sourceFilter.has("food") &&
     row.source === "instagram" &&
+    row.categories?.includes("food")
+  ) {
+    return true;
+  }
+  if (
+    sourceFilter.has("food") &&
+    row.source === "youtube" &&
     row.categories?.includes("food")
   ) {
     return true;

@@ -8,19 +8,22 @@ import {
   FEED_TIMES_PREVIEW_LIMIT,
   foodTipFallbackLabel,
   isActivityRecommendationSource,
+  isTheaterRecommendationSource,
   isExhibitionTag,
   exhibitionFeedTimeLabel,
   isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
+  isFeedVideo,
   isHappyHoursHubCard,
-  isInstagramVideo,
   isNewRestaurantRecommendationSource,
   isTimeTbaTag,
   movieGenresForDisplay,
   newRestaurantTipFallbackLabel,
+  theaterTipFallbackLabel,
   registrationStatusLabel,
 } from "@bored/shared";
+import { feedCardPosterUrl } from "@/lib/api";
 import { formatDayOnly, formatTime, formatWhen } from "@/lib/datetime";
 import { cardEventType, posterPlaceholderLabel } from "@/lib/evergreen-poster";
 import { FilmRatingBadges } from "@/components/FilmRatingBadges";
@@ -76,12 +79,20 @@ export function FeedCardView({
   );
   const isNewRestaurant = isNewRestaurantRecommendationSource(card.source);
   const isActivityTip = isActivityRecommendationSource(card.source ?? "");
-  const isEvergreenTip = isFoodTip || isActivityTip || isNewRestaurant;
+  const isTheaterTip = isTheaterRecommendationSource(card.source ?? "");
+  const isEvergreenTip = isFoodTip || isActivityTip || isTheaterTip || isNewRestaurant;
   const isFoodDeal = isFoodDealSource(card.source);
   const isHappyHoursHub = isHappyHoursHubCard(card);
-  const isIgReel = isInstagramVideo({ source: card.source, tags: card.tags });
+  const isIgReel = isFeedVideo({
+    source: card.source,
+    tags: card.tags,
+    rawPayload: { mediaType: card.mediaType },
+  });
+  const posterUrl = feedCardPosterUrl(card);
   const tipLabel = isNewRestaurant
     ? newRestaurantTipFallbackLabel(card.recommendationLabel)
+    : isTheaterTip
+      ? theaterTipFallbackLabel(card.recommendationLabel)
     : isActivityTip
       ? activityTipFallbackLabel(card.recommendationLabel)
       : foodTipFallbackLabel(card.recommendationLabel);
@@ -169,7 +180,7 @@ export function FeedCardView({
         onKeyDown={interactive ? onKeyDown : undefined}
       >
         <FeedCardMedia
-          imageUrl={card.imageUrl}
+          imageUrl={posterUrl}
           eventType={eventType}
           placeholderLabel={posterPlaceholderLabel(card)}
           isVideo={isIgReel}
@@ -195,6 +206,22 @@ export function FeedCardView({
     );
   }
 
+  const place = [card.venueName, card.neighborhood].filter(Boolean).join(" · ");
+
+  const largeWhenLabel = (() => {
+    if (live && !isEvergreenTip) return null;
+    if (isEvergreenTip || isHappyHoursHub) return null;
+    if (isExhibition) return exhibitionFeedTimeLabel();
+    if (isTimeTba) {
+      return tbaWhen
+        ? `${formatDayOnly(card.startsAt, timeZone)} · ${tbaWhen}`
+        : formatDayOnly(card.startsAt, timeZone);
+    }
+    if (isFoodDeal) return formatWhen(card.startsAt, timeZone);
+    if (hasMultipleTimes) return formatDayOnly(card.startsAt, timeZone);
+    return formatTime(card.startsAt, timeZone);
+  })();
+
   return (
     <article
       className={cardClass}
@@ -206,64 +233,125 @@ export function FeedCardView({
       onKeyDown={interactive ? onKeyDown : undefined}
     >
       <FeedCardMedia
-        imageUrl={card.imageUrl}
+        imageUrl={posterUrl}
         eventType={eventType}
         placeholderLabel={posterPlaceholderLabel(card)}
         isVideo={isIgReel}
       />
       <div className="card__body">
-        <h3>{card.title}</h3>
-        <div className="meta">
-          {live && !isEvergreenTip ? (
-            <>
-              <LiveNowBadge />
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
-            </>
-          ) : isEvergreenTip ? (
-            <>
-              {tipLabel}
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
-            </>
-          ) : isExhibition ? (
-            <>
-              {card.venueName ?? ""}
-              {card.venueName && card.neighborhood ? " · " : ""}
-              {card.neighborhood ?? ""}
-            </>
-          ) : isTimeTba ? (
-            <>
-              {formatDayOnly(card.startsAt, timeZone)}
-              {tbaWhen ? ` · ${tbaWhen}` : ""}
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
-            </>
-          ) : isHappyHoursHub ? (
-            <>
-              <LiveNowBadge />
-              {card.recommendationLabel ?? "Happening now"}
-            </>
-          ) : isFoodDeal ? (
-            <>
-              {formatWhen(card.startsAt, timeZone)}
-              {card.recommendationLabel
-                ? ` · ${card.recommendationLabel}`
-                : ""}
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
-            </>
-          ) : (
-            <>
-              {hasMultipleTimes || isTimeTba
-                ? formatDayOnly(card.startsAt, timeZone)
-                : formatWhen(card.startsAt, timeZone)}
-              {card.venueName ? ` · ${card.venueName}` : ""}
-              {card.neighborhood ? ` · ${card.neighborhood}` : ""}
-            </>
-          )}
-          {priceLabel ? ` · ${priceLabel}` : ""}
-        </div>
+        {size === "large" ? (
+          <>
+            {(live && !isEvergreenTip) || largeWhenLabel || isHappyHoursHub ? (
+              <div className="card__when">
+                {live && !isEvergreenTip ? (
+                  <LiveNowBadge />
+                ) : isHappyHoursHub ? (
+                  <>
+                    <LiveNowBadge />{" "}
+                    {card.recommendationLabel ?? "Happening now"}
+                  </>
+                ) : (
+                  largeWhenLabel
+                )}
+              </div>
+            ) : null}
+            <h3>{card.title}</h3>
+            {(place ||
+              tipLabel && isEvergreenTip ||
+              isFoodDeal && card.recommendationLabel ||
+              priceLabel) && (
+              <div className="meta card__place">
+                {place ? (
+                  <>
+                    <svg
+                      className="card__place-pin"
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      aria-hidden
+                    >
+                      <path
+                        d="M8 1.75c-2.4 0-4.35 1.9-4.35 4.25 0 3.2 4.35 8.25 4.35 8.25s4.35-5.05 4.35-8.25C12.35 3.65 10.4 1.75 8 1.75zm0 5.75a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                    <span>
+                      {isEvergreenTip ? `${tipLabel} · ` : null}
+                      {isFoodDeal && card.recommendationLabel
+                        ? `${card.recommendationLabel} · `
+                        : null}
+                      {place}
+                      {priceLabel ? ` · ${priceLabel}` : ""}
+                    </span>
+                  </>
+                ) : (
+                  <span>
+                    {isEvergreenTip ? tipLabel : null}
+                    {isFoodDeal ? card.recommendationLabel : null}
+                    {priceLabel
+                      ? `${isEvergreenTip || isFoodDeal ? " · " : ""}${priceLabel}`
+                      : ""}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <h3>{card.title}</h3>
+            <div className="meta">
+              {live && !isEvergreenTip ? (
+                <>
+                  <LiveNowBadge />
+                  {card.venueName ? ` · ${card.venueName}` : ""}
+                  {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+                </>
+              ) : isEvergreenTip ? (
+                <>
+                  {tipLabel}
+                  {card.venueName ? ` · ${card.venueName}` : ""}
+                  {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+                </>
+              ) : isExhibition ? (
+                <>
+                  {card.venueName ?? ""}
+                  {card.venueName && card.neighborhood ? " · " : ""}
+                  {card.neighborhood ?? ""}
+                </>
+              ) : isTimeTba ? (
+                <>
+                  {formatDayOnly(card.startsAt, timeZone)}
+                  {tbaWhen ? ` · ${tbaWhen}` : ""}
+                  {card.venueName ? ` · ${card.venueName}` : ""}
+                  {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+                </>
+              ) : isHappyHoursHub ? (
+                <>
+                  <LiveNowBadge />
+                  {card.recommendationLabel ?? "Happening now"}
+                </>
+              ) : isFoodDeal ? (
+                <>
+                  {formatWhen(card.startsAt, timeZone)}
+                  {card.recommendationLabel
+                    ? ` · ${card.recommendationLabel}`
+                    : ""}
+                  {card.venueName ? ` · ${card.venueName}` : ""}
+                  {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+                </>
+              ) : (
+                <>
+                  {hasMultipleTimes || isTimeTba
+                    ? formatDayOnly(card.startsAt, timeZone)
+                    : formatWhen(card.startsAt, timeZone)}
+                  {card.venueName ? ` · ${card.venueName}` : ""}
+                  {card.neighborhood ? ` · ${card.neighborhood}` : ""}
+                </>
+              )}
+              {priceLabel ? ` · ${priceLabel}` : ""}
+            </div>
+          </>
+        )}
         {(tags.length > 0 || showReg) && (
           <div className="tags">
             {showReg && (

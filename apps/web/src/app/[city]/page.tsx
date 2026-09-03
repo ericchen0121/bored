@@ -24,10 +24,12 @@ import {
   parseFeedSources,
   parseFeedTopics,
   isHappyHoursHubCard,
+  isFeedVideoCard,
+  partitionFeedVideoCards,
   withHappyHoursHubCard,
   type FeedCity,
 } from "@bored/shared";
-import { api } from "@/lib/api";
+import { api, recordFeedSignal } from "@/lib/api";
 import {
   trackFeedAreaChanged,
   trackFeedDateChanged,
@@ -44,6 +46,8 @@ import { ByTimeFeed } from "@/components/ByTimeFeed";
 import { DayStrip } from "@/components/DayStrip";
 import { MoviesSection } from "@/components/MoviesSection";
 import { FeedViewToggle } from "@/components/FeedViewToggle";
+import { VideoReelsCarousel } from "@/components/VideoReelsCarousel";
+import { VideoReelsFeed } from "@/components/VideoReelsFeed";
 import { SourceFilterMenu } from "@/components/SourceFilterMenu";
 import { DetailDrawer } from "@/components/detail/DetailDrawer";
 import {
@@ -58,7 +62,18 @@ import {
   feedCalendarMeta,
   type FeedCalendarMeta,
 } from "@/lib/feed-calendar";
-import { fetchFeedCached, peekFeedCache } from "@/lib/feed-cache";
+import {
+  fetchFeedCached,
+  feedParamsWithVideos,
+  feedParamsWithoutTopics,
+  peekFeedCache,
+} from "@/lib/feed-cache";
+import {
+  filterCardsByTopics,
+  topicNeedsServerEnrich,
+  topicsFullyCoveredByAll,
+  TOPICS_TO_WARM,
+} from "@/lib/topic-feed";
 import {
   feedRefreshPhrase,
   gatheringPhraseForArea,
@@ -143,8 +158,9 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   const [calendarMeta, setCalendarMeta] = useState<FeedCalendarMeta | null>(
     null,
   );
-  const [feedView, setFeedView] = useState<FeedView>("cards");
+  const [feedView, setFeedView] = useState<FeedView>("large");
   const [cards, setCards] = useState<FeedCard[]>([]);
+  const [videoCards, setVideoCards] = useState<FeedCard[]>([]);
   const [prefsSummary, setPrefsSummary] = useState<{
     interests: string[];
     neighborhoods: string[];
@@ -153,6 +169,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     budgetTier?: number | null;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reelsLoading, setReelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [prefsHydrated, setPrefsHydrated] = useState(() =>
@@ -231,6 +248,13 @@ function CityFeedCity({ city }: { city: FeedCity }) {
         id: next.id,
         surface: "feed",
       });
+      if (isFeedVideoCard(card) && next.kind === "event") {
+        recordFeedSignal({
+          targetKind: "event",
+          targetId: next.id,
+          type: "opened",
+        });
+      }
       syncUrl(mode, area, sources, date, next);
     },
     [syncUrl, mode, area, sources, date, selection, city],
@@ -433,56 +457,183 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       lastFeedRefreshKey.current !== refreshKey;
     lastFeedRefreshKey.current = refreshKey;
 
-    const cached = force ? null : peekFeedCache(params);
-    if (cached) {
-      setCards(cached);
-      if (overviewFetch) {
-        setCalendarMeta(feedCalendarMeta(cached, timeZone));
-      }
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+    // Today / For you: paint events as soon as ready; reels load in parallel.
+    // Source browsing IG/YT keeps the monolithic path so IMAGE tips stay.
+    const splitVideos =
+      (mode === "today" || mode === "for_you") &&
+      !sources.includes("instagram") &&
+      !sources.includes("youtube");
+
     setError(null);
 
-    void fetchFeedCached(params, { force })
-      .then((data) => {
-        if (cancelled) return;
-        setCards(data.cards);
+    if (!splitVideos) {
+      const cached = force ? null : peekFeedCache(params);
+      if (cached) {
+        setCards(cached);
+        setVideoCards([]);
         if (overviewFetch) {
-          setCalendarMeta(feedCalendarMeta(data.cards, timeZone));
+          setCalendarMeta(feedCalendarMeta(cached, timeZone));
         }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        setLoading(false);
+        setReelsLoading(false);
+      } else {
+        setLoading(true);
+        setReelsLoading(false);
+      }
+
+      void fetchFeedCached(params, { force })
+        .then((data) => {
+          if (cancelled) return;
+          setCards(data.cards);
+          setVideoCards([]);
+          if (overviewFetch) {
+            setCalendarMeta(feedCalendarMeta(data.cards, timeZone));
+          }
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setError(err.message);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+            setReelsLoading(false);
+          }
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const eventsParams = feedParamsWithVideos(params, "exclude");
+    const videosParams = feedParamsWithVideos(params, "only");
+    const allEventsParams = feedParamsWithVideos(
+      feedParamsWithoutTopics(params),
+      "exclude",
+    );
+
+    // Optimistic topic paint: filter warm All cache so dense chips feel instant.
+    const allCached =
+      !force && topics.length > 0 ? peekFeedCache(allEventsParams) : null;
+    const optimistic =
+      allCached && topics.length > 0
+        ? filterCardsByTopics(allCached, topics)
+        : null;
+    const denseFromAll =
+      Boolean(optimistic) &&
+      topicsFullyCoveredByAll(topics) &&
+      (optimistic?.length ?? 0) > 0;
+    const needsEnrich =
+      topics.length > 0 &&
+      (topicNeedsServerEnrich(topics) ||
+        !optimistic ||
+        optimistic.length === 0);
+
+    const cachedEvents = force ? null : peekFeedCache(eventsParams);
+    const cachedVideos = force ? null : peekFeedCache(videosParams);
+
+    if (cachedEvents) {
+      setCards(cachedEvents);
+      setLoading(false);
+    } else if (optimistic && optimistic.length > 0) {
+      setCards(optimistic);
+      // Soft refresh (isRefreshing) when curated extras may still arrive.
+      setLoading(needsEnrich && !denseFromAll);
+    } else {
+      // Empty topic (e.g. happy_hours) — don't leave the previous All list up.
+      if (topics.length > 0) setCards([]);
+      setLoading(true);
+    }
+
+    const skipVideosFetch = denseFromAll && !needsEnrich;
+    if (cachedVideos) {
+      setVideoCards(cachedVideos);
+      setReelsLoading(false);
+    } else if (skipVideosFetch) {
+      // Keep prior reels; dense calendar topics don't need a topic-scoped reel refetch.
+      setReelsLoading(false);
+    } else {
+      setReelsLoading(true);
+    }
+
+    const skipEventsFetch = denseFromAll && !needsEnrich && !force;
+
+    if (!skipEventsFetch) {
+      void fetchFeedCached(eventsParams, { force })
+        .then((data) => {
+          if (cancelled) return;
+          setCards(data.cards);
+        })
+        .catch((err: Error) => {
+          if (!cancelled && !optimistic?.length) setError(err.message);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    } else {
+      setLoading(false);
+    }
+
+    if (!skipVideosFetch) {
+      void fetchFeedCached(videosParams, { force })
+        .then((data) => {
+          if (cancelled) return;
+          setVideoCards(data.cards);
+        })
+        .catch(() => {
+          if (!cancelled) setVideoCards([]);
+        })
+        .finally(() => {
+          if (!cancelled) setReelsLoading(false);
+        });
+    }
+
     return () => {
       cancelled = true;
     };
   }, [prefsHydrated, mode, area, sources, topics, date, timeZone, refreshKey]);
 
-  // Warm For you in the background after Today paints so mode switch is instant.
+  // Warm For you + expensive topic feeds after Today All paints.
   useEffect(() => {
-    if (!prefsHydrated || !userReady) return;
-    if (!authenticated || !onboardingComplete) return;
+    if (!prefsHydrated) return;
     if (mode !== "today") return;
     if (loading) return;
+    if (topics.length > 0) return;
+    if (sources.length > 0) return;
 
     let cancelled = false;
-    const params = new URLSearchParams({
-      mode: "for_you",
+    const effectiveDate = date ?? dayKey(new Date(), timeZone);
+    const base = new URLSearchParams({
+      mode: "today",
       area,
-      limit: "40",
+      limit: "200",
+      date: effectiveDate,
+      videos: "exclude",
     });
-    if (sources.length) params.set("sources", sources.join(","));
-    if (topics.length) params.set("topics", topics.join(","));
 
     const run = () => {
       if (cancelled) return;
-      void fetchFeedCached(params);
+
+      // Curated-heavy topics — first chip click becomes a cache hit.
+      for (const topic of TOPICS_TO_WARM) {
+        const eventsParams = new URLSearchParams(base);
+        eventsParams.set("topics", topic);
+        void fetchFeedCached(eventsParams).catch(() => {});
+        if (topic === "food" || topic === "happy_hours") {
+          const videosParams = feedParamsWithVideos(eventsParams, "only");
+          void fetchFeedCached(videosParams).catch(() => {});
+        }
+      }
+
+      if (!userReady || !authenticated || !onboardingComplete) return;
+      const forYou = new URLSearchParams({
+        mode: "for_you",
+        area,
+        limit: "40",
+        videos: "exclude",
+      });
+      void fetchFeedCached(forYou).catch(() => {});
+      void fetchFeedCached(feedParamsWithVideos(forYou, "only")).catch(() => {});
     };
 
     let idleId: number | undefined;
@@ -509,6 +660,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     area,
     sources,
     topics,
+    date,
+    timeZone,
     loading,
     refreshKey,
   ]);
@@ -565,6 +718,24 @@ function CityFeedCity({ city }: { city: FeedCity }) {
 
   const movies = displayCards.filter((c) => c.kind === "movie_showtime");
 
+  const splitVideosActive =
+    (mode === "for_you" || mode === "today") &&
+    !sources.includes("instagram") &&
+    !sources.includes("youtube");
+
+  const { videos: partitionedReels, rest: cardsWithoutReels } = useMemo(
+    () => partitionFeedVideoCards(displayCards),
+    [displayCards],
+  );
+  const reelCards = splitVideosActive ? videoCards : partitionedReels;
+  const showReelsCarousel =
+    (mode === "for_you" || mode === "today") && feedView !== "reels";
+  const feedCards = feedView === "reels"
+    ? splitVideosActive
+      ? videoCards
+      : displayCards
+    : cardsWithoutReels;
+
   // Movies near you only when the Movies topic is on — don't lead For you /
   // Weekend with showtimes before organic picks.
   const moviesTopicActive = topics.includes("movies");
@@ -574,8 +745,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
     movies.length > 0 && moviesTopicActive && moviesSectionEligible;
   const mainCards =
     moviesSectionEligible && !moviesTopicActive
-      ? displayCards.filter((c) => c.kind !== "movie_showtime")
-      : displayCards;
+      ? feedCards.filter((c) => c.kind !== "movie_showtime")
+      : feedCards;
   const mainEvents = mainCards.filter((c) => c.kind === "event");
 
   const allUpcomingLabel =
@@ -597,7 +768,9 @@ function CityFeedCity({ city }: { city: FeedCity }) {
 
   const useByTimeLayout =
     feedView === "by_time" ||
-    (chronologicalBrowse && feedView !== "poster");
+    (chronologicalBrowse && feedView !== "poster" && feedView !== "reels");
+
+  const useReelsLayout = feedView === "reels";
 
   const calendarBounds = useMemo(() => {
     const minDate = calendarMeta?.minDate ?? dayKey(new Date(), timeZone);
@@ -611,16 +784,31 @@ function CityFeedCity({ city }: { city: FeedCity }) {
   }, [calendarMeta, timeZone]);
 
   const sectionTitle = (() => {
+    if (feedView === "reels") return "Reels & shorts";
     if (mode === "for_you") return "Picked for you";
     if (mode === "today") {
-      return selectedDay
-        ? `Today · ${selectedDay.dateLine}`
-        : "Today";
+      return selectedDay ? (
+        <>
+          Today{" "}
+          <span className="section-title__day">{selectedDay.weekdayLong}</span>
+        </>
+      ) : (
+        "Today"
+      );
     }
     if (selectedDay) {
-      return selectedDay.isToday
-        ? `Today · ${selectedDay.dateLine}`
-        : `${selectedDay.weekday} · ${selectedDay.dateLine}`;
+      return selectedDay.isToday ? (
+        <>
+          Today{" "}
+          <span className="section-title__day">{selectedDay.weekdayLong}</span>
+        </>
+      ) : (
+        <>
+          <span className="section-title__day">{selectedDay.weekdayLong}</span>
+          {" · "}
+          {selectedDay.dateLine}
+        </>
+      );
     }
     if (mode === "weekend") return "Weekend";
     if (mode === "date") return allUpcomingLabel;
@@ -811,6 +999,15 @@ function CityFeedCity({ city }: { city: FeedCity }) {
               />
             )}
 
+            {showReelsCarousel && (reelCards.length > 0 || reelsLoading) && (
+              <VideoReelsCarousel
+                cards={reelCards}
+                loading={reelsLoading && reelCards.length === 0}
+                onSelect={openDetail}
+                isSelected={(card) => cardMatchesSelection(card, selection)}
+              />
+            )}
+
             <section>
               <div className="section-title-row">
                 <h2 className="section-title">{sectionTitle}</h2>
@@ -824,7 +1021,9 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                   <FeedViewToggle value={feedView} onChange={selectFeedView} />
                 </div>
               </div>
-              {mainCards.length === 0 && !showMoviesSection && (
+              {mainCards.length === 0 &&
+                !showMoviesSection &&
+                !(showReelsCarousel && (reelCards.length > 0 || reelsLoading)) && (
                 <p className="muted">
                   Nothing in this view — try All topics
                   {sourcesViewEnabled ? " and All sources" : ""}
@@ -836,7 +1035,23 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                   or <Link href="/onboarding">update tastes</Link>.
                 </p>
               )}
-              {useByTimeLayout ? (
+              {useReelsLayout ? (
+                reelsLoading && mainCards.length === 0 ? (
+                  <VideoReelsCarousel
+                    cards={[]}
+                    loading
+                    skeletonCount={10}
+                    onSelect={openDetail}
+                    isSelected={() => false}
+                  />
+                ) : (
+                  <VideoReelsFeed
+                    cards={mainCards}
+                    onSelect={openDetail}
+                    isSelected={(card) => cardMatchesSelection(card, selection)}
+                  />
+                )
+              ) : useByTimeLayout ? (
                 <ByTimeFeed
                   cards={mainCards}
                   timeZone={timeZone}
@@ -847,13 +1062,7 @@ function CityFeedCity({ city }: { city: FeedCity }) {
                   }
                   collapseEarlier={Boolean(selectedDay?.isToday)}
                   sourceFilter={sources}
-                  variant={
-                    feedView === "by_time"
-                      ? "text"
-                      : feedView === "large"
-                        ? "large"
-                        : "default"
-                  }
+                  variant={feedView === "by_time" ? "text" : "large"}
                 />
               ) : (
                 <div
@@ -914,7 +1123,11 @@ function CityFeedCity({ city }: { city: FeedCity }) {
       </div>
 
       {selection && (
-        <DetailDrawer selection={selection} onClose={closeDetail} />
+        <DetailDrawer
+          selection={selection}
+          onClose={closeDetail}
+          reelPlaylist={reelCards}
+        />
       )}
     </div>
   );

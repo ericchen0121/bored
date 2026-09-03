@@ -11,10 +11,18 @@ import {
 } from "./eventOccurrences";
 import {
   isGenericVenueName,
+  isMusicPreferredOver19hz,
   listingIdentityUrl,
   musicTitlesSoftMatch,
   musicVenuesSoftMatch,
 } from "./mergeMusicListings";
+
+/** TM genre/category placeholders — prefer real RA/Dice/etc flyers. */
+function flyerStrength(url: string | null | undefined): number {
+  if (!url?.trim()) return 0;
+  if (/ticketm\.net\/dam\/c\//i.test(url)) return 1;
+  return 2;
+}
 
 /** Stable hash for grouping same title + venue + local day. */
 export function occurrenceGroupKey(
@@ -44,12 +52,22 @@ type SoftCarrier = OccurrenceCarrier & {
   organizer?: string | null;
 };
 
+/** Prefer curated festival headline over platform twins (RA / TM day passes). */
+function isCuratedMusicFestivalRow(row: SoftCarrier): boolean {
+  if (row.source !== "music_festival") return false;
+  const payload = row.rawPayload as { curated?: unknown } | null | undefined;
+  return payload?.curated === true;
+}
+
 /** Prefer flyer + richer listing when collapsing soft duplicates. */
 function pickCanonical<T extends SoftCarrier>(group: T[]): T {
+  const curatedFest = group.find(isCuratedMusicFestivalRow);
+  if (curatedFest) return curatedFest as T;
+
   return [...group].sort((a, b) => {
-    const aImg = a.imageUrl ? 1 : 0;
-    const bImg = b.imageUrl ? 1 : 0;
-    if (aImg !== bImg) return bImg - aImg;
+    const aFlyer = flyerStrength(a.imageUrl);
+    const bFlyer = flyerStrength(b.imageUrl);
+    if (aFlyer !== bFlyer) return bFlyer - aFlyer;
     const aOrg = a.organizer?.trim() ? 1 : 0;
     const bOrg = b.organizer?.trim() ? 1 : 0;
     if (aOrg !== bOrg) return bOrg - aOrg;
@@ -123,8 +141,8 @@ function mergeOccurrenceGroup<T extends SoftCarrier>(group: T[]): T {
 
 /**
  * Collapse duplicate listings (same title + venue + local day) into one row.
- * Then soft-merge same-source near-duplicates (shared ticket URL, or overlapping
- * titles at the same venue/night — e.g. Do312 dual listings).
+ * Then soft-merge near-duplicates (shared ticket URL, same-source dual
+ * listings, or cross-source music platform twins — e.g. RA ↔ Ticketmaster).
  */
 export function coalesceEventOccurrences<T extends SoftCarrier>(
   rows: T[],
@@ -185,9 +203,13 @@ function venuesCompatibleForSoftMerge(
 }
 
 /**
- * Soft twin: shared ticket URL on the same local day (any source), or same
- * source + day + soft title + compatible venue. Same Universe/TM URL across
- * multi-day timed-entry runs must NOT collapse into one listing.
+ * Soft twin: shared ticket URL on the same local day (any source), or
+ * title+venue soft-match when:
+ * - same source (Do312 dual listings), or
+ * - both music ticket platforms (RA ↔ Ticketmaster, etc.) within 4h
+ *
+ * Same Universe/TM URL across multi-day timed-entry runs must NOT collapse
+ * into one listing (URL match still requires same local day).
  */
 export function listingsSoftDuplicateMatch(
   a: SoftCarrier,
@@ -201,7 +223,17 @@ export function listingsSoftDuplicateMatch(
 
   const sourceA = a.source;
   const sourceB = b.source;
-  if (!sourceA || !sourceB || sourceA !== sourceB) return false;
+  if (!sourceA || !sourceB) return false;
+
+  const sameSource = sourceA === sourceB;
+  const crossMusic =
+    !sameSource &&
+    isMusicPreferredOver19hz(sourceA) &&
+    isMusicPreferredOver19hz(sourceB);
+  if (!sameSource && !crossMusic) return false;
+  // Cross-source music: require near-identical start (not just same calendar day).
+  if (crossMusic && !startsWithinHours(a, b, 4)) return false;
+
   if (!musicTitlesSoftMatch(a.title, b.title)) return false;
   return venuesCompatibleForSoftMerge(a, b);
 }

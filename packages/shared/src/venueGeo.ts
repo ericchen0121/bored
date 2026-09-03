@@ -110,9 +110,382 @@ const SF_VENUE_GEO: VenueGeoEntry[] = [
   },
   {
     label: "Doc's Lab",
-    match: ["doc's lab", "docs lab"],
+    match: ["doc's lab", "docs lab", "tabernacle comedy"],
     lat: 37.7982,
     lng: -122.4059,
+  },
+  {
+    label: "Mabuhay Gardens",
+    match: ["mabuhay gardens", "the mab", "themab"],
+    lat: 37.7979,
+    lng: -122.4055,
+  },
+  {
+    label: "Throckmorton Theatre",
+    match: ["throckmorton", "142 throckmorton"],
+    lat: 37.906,
+    lng: -122.545,
+  },
+  {
+    label: "Stork Club Oakland",
+    match: ["stork club", "storking comedy"],
+    lat: 37.8136,
+    lng: -122.2682,
+  },
+  {
+    label: "The BreakRoom",
+    match: ["breakroom", "break room berkeley"],
+    lat: 37.8715,
+    lng: -122.2687,
+  },
+  {
+    label: "Stay Gold Deli",
+    match: ["stay gold"],
+    lat: 37.8189,
+    lng: -122.2728,
+  },
+  {
+    label: "Fireside Lounge Alameda",
+    match: ["fireside lounge", "alameda comedy", "alameda theatre"],
+    lat: 37.7725,
+    lng: -122.2765,
+  },
+  {
+    label: "Orpheum Theatre SF",
+    match: ["orpheum theatre", "orpheum theater", "broadwaysf"],
+    lat: 37.7793,
+    lng: -122.4145,
+  },
+  {
+    label: "Golden Gate Theatre",
+    match: ["golden gate theatre", "golden gate theater"],
+    lat: 37.7822,
+    lng: -122.4108,
+  },
+  {
+    label: "Curran Theatre",
+    match: ["curran theatre", "curran theater"],
+    lat: 37.7869,
+    lng: -122.4101,
+  },
+  {
+    label: "ACT Geary Theater",
+    match: ["act geary", "geary theater", "american conservatory theater"],
+    lat: 37.787,
+    lng: -122.4107,
+  },
+  {
+    label: "SF Playhouse",
+    match: ["sf playhouse"],
+    lat: 37.7886,
+    lng: -122.4094,
+  },
+  {
+    label: "Berkeley Rep",
+    match: ["berkeley rep", "berkeley repertory"],
+    lat: 37.8716,
+    lng: -122.2697,
+  },
+  {
+    label: "Mr. Tipple's Jazz Club",
+    match: ["mr. tipple", "mr tipple", "mrtipples"],
+    lat: 37.7762,
+    lng: -122.4185,
+  },
+  {
+    label: "Black Cat",
+    match: ["black cat sf", "black cat supper", "blackcatsf"],
+    lat: 37.7852,
+    lng: -122.4145,
+  },
+  {
+    label: "Sheba Piano Lounge",
+    match: ["sheba piano", "sheba lounge"],
+    lat: 37.7827,
+    lng: -122.4327,
+  },
+  {
+    label: "The Dawn Club",
+    match: ["dawn club"],
+    lat: 37.7884,
+    lng: -122.4017,
+  },
+  {
+    label: "Keys Jazz Bistro",
+    match: ["keys jazz", "keys bistro"],
+    lat: 37.798,
+    lng: -122.4053,
+  },
+  {
+    label: "Bird & Beckett",
+    match: ["bird & beckett", "bird and beckett"],
+    lat: 37.7342,
+    lng: -122.4342,
+  },
+  {
+    label: "Royal Cuckoo Organ Lounge",
+    match: ["royal cuckoo"],
+    lat: 37.7525,
+    lng: -122.4186,
+  },
+  {
+    label: "Harris' Restaurant",
+    match: ["harris' restaurant", "harris restaurant", "pacific bar"],
+    lat: 37.7878,
+    lng: -122.4219,
+  },
+  {
+    label: "Kilowatt",
+    match: ["kilowatt", "kilowatt bar"],
+    lat: 37.7651,
+    lng: -122.4233,
+  },
+  {
+    label: "The Knockout",
+    match: ["the knockout", "knockout sf"],
+    lat: 37.7458,
+    lng: -122.4195,
+  },
+  {
+    label: "Bottom of the Hill",
+    match: ["bottom of the hill"],
+    lat: 37.7651,
+    lng: -122.3972,
+  },
+  {
+    label: "The Independent",
+    match: ["the independent", "independentsf"],
+    lat: 37.7756,
+    lng: -122.4376,
+  },
+  {
+    label: "Bill Graham Civic Auditorium",
+    match: ["bill graham", "civic auditorium"],
+    lat: 37.7785,
+    lng: -122.4174,
+  },
+  {
+    label: "The Fillmore",
+    match: ["the fillmore", "fillmore auditorium"],
+    lat: 37.7841,
+    lng: -122.4331,
+  },
+  {
+    label: "The Warfield",
+    match: ["the warfield", "warfield theatre", "warfield theater"],
+    lat: 37.7826,
+    lng: -122.4125,
+  },
+  {
+    label: "Great American Music Hall",
+    match: ["great american music hall", "gamh"],
+    lat: 37.785,
+    lng: -122.4189,
+  },
+  {
+    label: "The Chapel",
+    match: ["the chapel sf", "the chapel san francisco"],
+    lat: 37.7605,
+    lng: -122.4213,
+  },
+  {
+    label: "Cafe du Nord",
+    match: ["cafe du nord", "café du nord"],
+    lat: 37.7599,
+    lng: -122.4346,
+  },
+  {
+    label: "Bimbo's 365 Club",
+    match: ["bimbo's", "bimbos 365"],
+    lat: 37.8037,
+    lng: -122.4158,
+  },
+  {
+    label: "August Hall",
+    match: ["august hall"],
+    lat: 37.7716,
+    lng: -122.4135,
+  },
+  {
+    label: "Boom Boom Room",
+    match: ["boom boom room", "boom boom sf"],
+    lat: 37.7842,
+    lng: -122.4333,
+  },
+  {
+    label: "Rickshaw Stop",
+    match: ["rickshaw stop"],
+    lat: 37.7761,
+    lng: -122.4205,
+  },
+  // Chicago
+  {
+    label: "Green Mill",
+    match: ["green mill"],
+    lat: 41.9692,
+    lng: -87.6598,
+  },
+  {
+    label: "Jazz Showcase",
+    match: ["jazz showcase"],
+    lat: 41.8715,
+    lng: -87.628,
+  },
+  {
+    label: "Andy's Jazz Club",
+    match: ["andy's jazz", "andys jazz"],
+    lat: 41.8899,
+    lng: -87.6276,
+  },
+  {
+    label: "Empty Bottle",
+    match: ["empty bottle"],
+    lat: 41.9005,
+    lng: -87.6865,
+  },
+  {
+    label: "Metro Chicago",
+    match: ["metro chicago", "metro & smartbar"],
+    lat: 41.9499,
+    lng: -87.6589,
+  },
+  {
+    label: "Thalia Hall",
+    match: ["thalia hall"],
+    lat: 41.8578,
+    lng: -87.6575,
+  },
+  {
+    label: "Kingston Mines",
+    match: ["kingston mines"],
+    lat: 41.9295,
+    lng: -87.649,
+  },
+  {
+    label: "Buddy Guy's Legends",
+    match: ["buddy guy", "buddy guys"],
+    lat: 41.8732,
+    lng: -87.6259,
+  },
+  {
+    label: "Beat Kitchen",
+    match: ["beat kitchen"],
+    lat: 41.9397,
+    lng: -87.6805,
+  },
+  {
+    label: "Salt Shed",
+    match: ["salt shed"],
+    lat: 41.9125,
+    lng: -87.6565,
+  },
+  // Los Angeles
+  {
+    label: "Catalina Jazz Club",
+    match: ["catalina jazz"],
+    lat: 34.0978,
+    lng: -118.3372,
+  },
+  {
+    label: "The Baked Potato",
+    match: ["baked potato"],
+    lat: 34.1365,
+    lng: -118.3618,
+  },
+  {
+    label: "Zebulon",
+    match: ["zebulon"],
+    lat: 34.1065,
+    lng: -118.2445,
+  },
+  {
+    label: "Lodge Room",
+    match: ["lodge room"],
+    lat: 34.1115,
+    lng: -118.1935,
+  },
+  {
+    label: "Troubadour",
+    match: ["troubadour"],
+    lat: 34.0814,
+    lng: -118.3894,
+  },
+  {
+    label: "Whisky a Go Go",
+    match: ["whisky a go go", "whiskey a go go"],
+    lat: 34.0908,
+    lng: -118.3856,
+  },
+  {
+    label: "The Smell",
+    match: ["the smell"],
+    lat: 34.0505,
+    lng: -118.2465,
+  },
+  {
+    label: "Fonda Theatre",
+    match: ["fonda theatre", "fonda theater"],
+    lat: 34.1014,
+    lng: -118.3234,
+  },
+  {
+    label: "The Wiltern",
+    match: ["the wiltern", "wiltern theatre"],
+    lat: 34.062,
+    lng: -118.309,
+  },
+];
+
+/** LA clubs that show up on Eventbrite / DoLA without coordinates. */
+const LA_VENUE_GEO: VenueGeoEntry[] = [
+  {
+    label: "The Comedy Store",
+    match: [
+      "comedy store",
+      "comedystore",
+      "belly room",
+      "original room",
+      "potluck",
+      "set of the night",
+    ],
+    lat: 34.0952,
+    lng: -118.3739,
+  },
+  {
+    label: "Laugh Factory Hollywood",
+    match: ["laugh factory"],
+    lat: 34.0983,
+    lng: -118.3647,
+  },
+  {
+    label: "Hollywood Improv",
+    match: ["hollywood improv", "the improv hollywood"],
+    lat: 34.0835,
+    lng: -118.3735,
+  },
+  {
+    label: "Dynasty Typewriter",
+    match: ["dynasty typewriter"],
+    lat: 34.0578,
+    lng: -118.2765,
+  },
+  {
+    label: "Largo",
+    match: ["largo at the coronet", "largo-la"],
+    lat: 34.0778,
+    lng: -118.3765,
+  },
+  {
+    label: "Flappers Comedy Club",
+    match: ["flappers comedy"],
+    lat: 34.1802,
+    lng: -118.3117,
+  },
+  {
+    label: "UCB Sunset",
+    match: ["upright citizens brigade", "ucb sunset"],
+    lat: 34.1054,
+    lng: -118.3162,
   },
 ];
 
@@ -505,7 +878,9 @@ export function resolveEventCoords(input: {
     input.neighborhood,
   ]);
   if (venueText) {
-    const venue = matchGeoEntry(venueText, SF_VENUE_GEO);
+    const venue =
+      matchGeoEntry(venueText, SF_VENUE_GEO) ??
+      matchGeoEntry(venueText, LA_VENUE_GEO);
     if (venue) {
       return { lat: venue.lat, lng: venue.lng, geoSource: venue.label };
     }

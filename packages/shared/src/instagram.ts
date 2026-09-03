@@ -15,7 +15,7 @@ export function instagramShortcodeFromUrl(
   return null;
 }
 
-/** Official Instagram embed player URL for inline playback. */
+/** Official Instagram embed player URL — often redirects to Instagram on play. Prefer native media. */
 export function instagramEmbedUrl(
   permalink: string | null | undefined,
 ): string | null {
@@ -24,10 +24,22 @@ export function instagramEmbedUrl(
   try {
     const parts = new URL(permalink!.trim()).pathname.split("/").filter(Boolean);
     const kind = parts[0] ?? "p";
-    return `https://www.instagram.com/${kind}/${shortcode}/embed`;
+    return `https://www.instagram.com/${kind}/${shortcode}/embed/?hidecaption=1`;
   } catch {
     return null;
   }
+}
+
+/**
+ * Public Instagram preview image redirect (no Graph token).
+ * Works as `<img src>` more reliably than expired CDN hotlinks.
+ */
+export function instagramMediaPreviewUrl(
+  permalink: string | null | undefined,
+): string | null {
+  const shortcode = instagramShortcodeFromUrl(permalink);
+  if (!shortcode) return null;
+  return `https://www.instagram.com/p/${shortcode}/media/?size=l`;
 }
 
 export function isInstagramVideo(opts: {

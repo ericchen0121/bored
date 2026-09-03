@@ -9,18 +9,6 @@ const OPTIONS: {
   icon: ReactNode;
 }[] = [
   {
-    id: "cards",
-    label: "Standard cards",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-        <rect x="1.5" y="2.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <rect x="9.5" y="2.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <rect x="1.5" y="8.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <rect x="9.5" y="8.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      </svg>
-    ),
-  },
-  {
     id: "large",
     label: "Larger cards",
     icon: (
@@ -67,18 +55,52 @@ const OPTIONS: {
       </svg>
     ),
   },
+  {
+    id: "reels",
+    label: "Reels & shorts",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+        <rect
+          x="4.5"
+          y="1.5"
+          width="7"
+          height="13"
+          rx="2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <path
+          d="M7.5 6.5l3 1.75-3 1.75V6.5z"
+          fill="currentColor"
+          stroke="none"
+        />
+      </svg>
+    ),
+  },
 ];
 
 export function FeedViewToggle({
   value,
   onChange,
+  views,
+  ariaLabel = "Feed layout",
 }: {
   value: FeedView;
   onChange: (view: FeedView) => void;
+  /** Subset of layouts (e.g. Saved reels: reels + larger cards). */
+  views?: readonly FeedView[];
+  ariaLabel?: string;
 }) {
+  const options = views?.length
+    ? views
+        .map((id) => OPTIONS.find((o) => o.id === id))
+        .filter((o): o is (typeof OPTIONS)[number] => Boolean(o))
+    : OPTIONS;
+
   return (
-    <div className="feed-view-toggle" role="group" aria-label="Feed layout">
-      {OPTIONS.map((opt) => (
+    <div className="feed-view-toggle" role="group" aria-label={ariaLabel}>
+      {options.map((opt) => (
         <button
           key={opt.id}
           type="button"

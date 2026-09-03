@@ -90,9 +90,11 @@ Sets `onboardingComplete: true`.
 {
   "targetKind": "event" | "film" | "showtime",
   "targetId": "<uuid>",
-  "type": "saved" | "dismissed" | "going" | "opened"
+  "type": "saved" | "dismissed" | "going" | "opened" | "impressed"
 }
 ```
+
+`impressed` / `opened` upsert and refresh `createdAt` (TTL soft-hides for the reels carousel). Other types are insert-or-return-existing.
 
 ### `GET /v1/me/saved`
 
@@ -158,6 +160,7 @@ Primary product endpoint.
 | `sources` | comma list | — | Optional hard filter by ingest source (`19hz`, `funcheap`, `luma`, `ticketmaster`, …). `ticketmaster` also includes `comedy_venue`; `food` also includes `food_deals`. Hides movie showtimes when set. |
 | `freeOnly` | bool | — | |
 | `lat` / `lng` / `radiusMiles` | numbers | from prefs | Override location |
+| `videos` | `include` \| `exclude` \| `only` | `include` | Progressive paint: web Today/For you fetch `exclude` (events) + `only` (reels) in parallel so the timeline paints before the carousel. `include` keeps a single payload (map / back-compat). Dense topic chips (`concerts`, `nightlife`, …) paint instantly from the warm All list on the client; curated topics (`food`, `happy_hours`, …) soft-fetch / idle-prefetch. |
 
 #### Topic filters
 
@@ -165,8 +168,8 @@ Primary product endpoint.
 
 | Topic id | Matches |
 |---|---|
-| `concerts` | `music.*` categories |
-| `comedy` | `comedy.*` categories |
+| `concerts` | `music.*` categories (incl. recurring jazz residencies) |
+| `comedy` | `comedy.*` categories; `comedy_venue`; comedy recurring rooms only |
 | `movies` | `movie_showtime` cards + `movies.*` categories |
 | `sports` | Sports-related tags / titles |
 | `festivals` | Festival, street fair, block party, night market |
@@ -174,7 +177,8 @@ Primary product endpoint.
 | `happy_hours` | `food_deals` rows where `dealKind !== "lunch"` |
 | `food` | Food categories + `food` / `food_deals` / food Instagram sources |
 | `nightlife` | `nightlife` category + `bars` tag |
-| `arts` | `arts` category + theatre / museum / gallery hints |
+| `arts` | `arts` category + museum / gallery hints (theater has its own topic) |
+| `theater` | `theater` / `stage_venue` sources + `arts` + Broadway/musical/play tags |
 
 Matching logic: `matchesFeedTopic()` / `matchesAnyFeedTopic()` in `taxonomy.ts`. Uses `categories[]` first, then source (`19hz`, `comedy_venue`, …), tags, title, and venue heuristics — no separate topic tags at ingest.
 
@@ -239,6 +243,7 @@ Requires `Authorization: Bearer <ADMIN_TOKEN>` (or `X-Admin-Token`). See [Admin]
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/v1/admin/health` | Auth check |
+| GET | `/v1/admin/deploys` | Railway latest deploy per service + recent history |
 | GET | `/v1/admin/ingest/adapters` | Adapter ids + last run + static schedules |
 | GET | `/v1/admin/ingest/runs` | Paginated run history |
 | GET/POST | `/v1/admin/ingest/jobs` | Queue / enqueue (`phase1` \| `all` \| `adapters`) |

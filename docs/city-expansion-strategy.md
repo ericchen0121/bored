@@ -168,6 +168,8 @@ Add these steps to the [adapter refactor checklist](./city-seeding.md#adapter-re
 | A8 | Ship **metro neighborhood chips** (`N_NEIGHBORHOODS` + `neighborhoodsForCity`) — [Tastes / neighborhoods](#tastes--neighborhoods-onboarding) |
 | A9 | **Local weather geo** — extend `venueGeo.ts` with metro localities / common venues so address-only listings get weather + maps — [architecture — Event location & weather](./architecture.md#event-location--weather) |
 | A10 | **Feed demotions** — do **not** hardcode city lists in demotion matching. Rules resolve metro via `eventInArea` / `FEED_AREAS` (`feedDemotion.ts`). Adding a city to taxonomy is enough for metro filters + Admin area dropdown; only create ops rules when a local venue needs burying — [Ranking](./ranking.md#feed-demotion-rules), [city-seeding §14d](./city-seeding.md#adapter-refactor-checklist-reusable-for-any-new-city) |
+| A11 | **IG / YouTube locality** — add metro handles + neighborhood regexes; never trust `city:` from the account list alone — [Instagram & YouTube](#instagram--youtube-city-expansion) |
+| A12 | **Live music rooms** — `music_venue_*` TM keywords + jazz/punk/blues recurring seed — [Live music sourcing](./ingest.md#live-music-sourcing-city-expansion) |
 
 **Acceptance:** ≥15 evergreen activity cards per metro, both audience layers represented, detail page enriches from source URL when available. Address-only listings in the metro still show **local** weather (not downtown of another city).
 
@@ -214,7 +216,7 @@ Every metro needs a **place-specific feed hero** — not a generic “what’s o
 
 | Metro / area | Lede |
 |---|---|
-| San Francisco | Foghorn nights, Mission dance floors, and comedy that runs late. |
+| San Francisco | Foghorn nights, Mission dance floors, and sold-out standup rooms. |
 | Bay Area | East Bay warehouses, Peninsula stages, and everything between the bridges. |
 | Chicago | Lakefront golden hour, warehouse bass, and rooms that laugh all week. |
 | Los Angeles | Hillside sunsets, taco trucks, and rooms that run late in Hollywood. |
@@ -241,6 +243,7 @@ When adding city **N**, ship hero image + palette + lede in the same PR as the w
 
 - Slug `la` on `FEED_CITIES`; Phase 1 adapters (`ticketmaster_la`, `luma_la`, `ra_la`, `19hz_la`, `eventbrite_la`, `comedy_venue_la`)
 - Food tips (Eater LA + Infatuation), curated deals, comedy recurring + `comedy_venue_la`
+- Live music rooms: `music_venue_la` + Catalina / Zebulon / Lodge Room / Troubadour / Smell recurring
 - `CURATED_ACTIVITIES_LA` (22 rows) + hero (“Gathering the haze…”); Movies TMS deferred at MVP
 - Topic smoke verified: concerts, comedy, food, activities, free (`area=la`)
 
@@ -250,13 +253,94 @@ When adding city **N**, ship hero image + palette + lede in the same PR as the w
 |---|---|---|
 | P0 | Phase 1 calendars + food tips | Minimum viable metro ([city-seeding](./city-seeding.md)) |
 | **P1** | **Evergreen activities** | High taste signal, differentiates from Ticketmaster-only feeds; reuses food-style UX |
-| P1 | Food deals, comedy depth | Engagement loops for repeat users |
-| P2 | Movies, Instagram | Depth |
+| P1 | Food deals, comedy depth, **live music rooms** | Engagement loops for repeat users |
+| P2 | Movies, **local** Instagram / YouTube | Depth — only after calendars + food feel native |
 
-Ship **food tips + evergreen activities** before calling a city “launch-ready” for taste-driven users.
+Ship **food tips + evergreen activities** before calling a city “launch-ready” for taste-driven users. Ship **IG / YT** only with locality rules below — a carousel of NYC reels on the SF feed is worse than no carousel.
+
+## Instagram & YouTube (city expansion)
+
+Short-form video is how openings and neighborhood food actually spread. It is also the easiest vertical to make a metro feel fake: influencers tagged to SF still post NYC, LA, Paris.
+
+**Rule:** `city` on the row is the **account’s home metro**, not proof the caption is local. Ingest **and** the feed must run `isVideoContentLocalToMetro()` (`packages/shared/src/videoLocality.ts`).
+
+### Two account types
+
+| Flag | Who | Keep a post when |
+|---|---|---|
+| `localOutlet: true` | Metro-branded desks — `eater_sf`, `eater_chi`, `timeoutlosangeles`, `onlyinsf`, `do312`, … | Caption is **not** strongly another city. Bare “Chicago’s Kasama” in an SF restaurant rec is OK. |
+| Influencer (no outlet flag) | Food creators who travel | Caption has a **local** hashtag, neighborhood, or city name (`#sfeats`, Mission, `#chicagoeats`, DTLA). |
+
+Never put national accounts (`theinfatuation`, `tastingtable`, `Eater`) on a metro list unless every post still passes locality (prefer city-specific handles: `infatuationsf`, `EaterLA`).
+
+### Caption / tag locality (every metro)
+
+Extend **all three** when adding city **N** — do not copy SF hashtags onto Chicago rows:
+
+| Piece | File | What to add for N |
+|---|---|---|
+| Local regex | `videoLocality.ts` → `LOCAL_RE.n` | City name, `#n…` food tags, metro nicknames (`#312`, `#dtla`) |
+| Neighborhoods | `NEIGHBORHOODS.n` | Same chips as tastes (`N_NEIGHBORHOODS`) plus common `#hashtag` forms |
+| Foreign drop | `FOREIGN_STRONG` | Other Bored metros + NYC + travel (`#nyc`, `in NYC`, 📍 NYC, Paris, Tokyo, …) |
+| Outlet list | `LOCAL_OUTLETS.n` | Handles that are *this* city’s desk |
+
+`FOREIGN_STRONG` must stay **strong** (hashtags, “in Chicago”, pin lines). Do **not** drop an SF Eater rec because it mentions another city’s restaurant by name.
+
+Feed filter uses `videoMetroFromFeedArea(area)` (`sf` + `bay` → Bay Area). Same helper for Chicago / LA.
+
+### What to ingest vs skip
+
+| Keep | Skip |
+|---|---|
+| Food tip / opening / city-guide / dated event **and** locality pass | Travel vlogs, nails, merch, “NYC day in my life” |
+| Reels/videos with a Graph **`media_url`** (or carousel child video URL) | Reels Graph returns without `media_url` (~often) — they cannot play in-app |
+| YouTube **Shorts** (`≤90s`) that pass locality | Long uploads; national `Eater` shorts with no metro cue |
+
+`foodInfluencer` does **not** bypass locality or “is this food/event?” heuristics.
+
+### Playback (do not hotlink Instagram CDN)
+
+Browsers block `cdninstagram.com` (`Cross-Origin-Resource-Policy`). Players use API proxies only:
+
+- `GET /v1/events/:id/media/stream` — video
+- `GET /v1/events/:id/media/poster` — poster
+
+Feed ranking drops Instagram videos with empty `rawPayload.mediaUrl` so the carousel never shows “Watch on Instagram” as the primary player.
+
+### Per-city minimum bar
+
+Before calling IG/YT “shipped” for a metro:
+
+- [ ] ≥3 `localOutlet` IG handles (Eater / Time Out / city guide or equivalent)
+- [ ] ≥3 local food creators **and** locality tests (spot-check: no `#nyceats` on that metro’s Today carousel)
+- [ ] ≥15 active scrape handles total for that metro (seed + admin) — SF reference; CHI/LA should not stay outlet-only
+- [ ] Neighborhood regexes covering the tastes chip list
+- [ ] Optional: 1–3 YouTube channels with `localOutlet` (or national channels that still require caption metro)
+- [ ] `IG_ACCESS_TOKEN` + `IG_BUSINESS_USER_ID` (and `YOUTUBE_API_KEY` for Shorts) on the ingest worker
+- [ ] Smoke: `GET /v1/feed?area=<slug>&mode=today` — Reels row titles/captions are this metro; click-to-play uses `/media/stream`, not Instagram embed
+- [ ] Admin: `/admin/instagram` lists the metro’s handles; new creators can be added without a code deploy
+
+### Metro depth tracker
+
+| Metro | Outlets / guides | Food creators (seed) | Notes |
+|---|---|---|---|
+| SF / Bay | ✓ (Eater, Infatuation, FOUND, Time Out, …) | ✓ deep seed list | Reference |
+| Chicago | ✓ (Eater, Infatuation, Time Out, Do312, Block Club, …) | ✓ expanded seed influencers | Keep growing via Admin → Instagram |
+| LA | ✓ (Eater, Infatuation, Time Out, LAist, DiscoverLA, …) | ✓ expanded seed influencers | Keep growing via Admin → Instagram |
+
+### Code touchpoints
+
+| Concern | File |
+|---|---|
+| Locality + outlet lists | `packages/shared/src/videoLocality.ts` |
+| IG handles (seed + admin merge) | `packages/ingest/src/igCreators.ts` (`SEED_IG_CREATORS` + `ig_creators` table) |
+| YT channels | `packages/ingest/src/adapters/youtube.ts` (`CURATED_CHANNELS`) |
+| Feed drop (geo + unplayable) | `apps/api/src/index.ts` feed filter |
+| Player | `ReelsPlayer` / `instagramMediaStreamUrl` — never CDN `mediaUrl` |
+| Admin scrape list | `/admin/instagram` |
 
 ## Related docs
 
 - [City seeding plan](./city-seeding.md) — Chicago phases, adapter checklist
 - [Architecture — food vertical](./architecture.md#food-vertical-sf-reference-implementation) — evergreen recommendation pattern to copy
-- [Ingest — newsletter / guides](./ingest.md) — what to extract vs skip
+- [Ingest — newsletter / guides](./ingest.md) — what to extract vs skip; [IG / YouTube](./ingest.md#instagram--youtube-reels)

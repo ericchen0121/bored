@@ -19,12 +19,12 @@ import {
   genreTagsForDisplay,
   igFoodRecommendationLabel,
   isActivityRecommendationSource,
+  isTheaterRecommendationSource,
   isEvergreenRecommendationSource,
   isExhibitionTag,
   isFeedEventLive,
   isFoodDealSource,
   isFoodRecommendationSource,
-  isInstagramVideo,
   isMusicListing,
   isNewRestaurantRecommendationSource,
   isSponsoredActive,
@@ -39,6 +39,8 @@ import {
   resolveEventOutboundDestinations,
   resolveSportsTeamRows,
   stripInfatuationRatingTitle,
+  theaterRecommendationLabel,
+  theaterTipFallbackLabel,
   decodeHtmlEntities,
 } from "@bored/shared";
 import { artistListenLinks } from "@/lib/artist-listen";
@@ -52,7 +54,7 @@ import { trackCtaClicked } from "@/lib/analytics";
 import { SaveButton } from "@/components/SaveButton";
 import { usePathname } from "next/navigation";
 import { ListenPlatformIcon } from "./ListenPlatformIcon";
-import { InstagramReelEmbed } from "./InstagramReelEmbed";
+import { VideoEmbed, isDetailVideo } from "./VideoEmbed";
 import { EventWeatherInline } from "./EventWeatherInline";
 import { EventDetailLocation } from "./EventDetailLocation";
 import type { EventDetail } from "./types";
@@ -245,6 +247,7 @@ export function EventDetailContent({
   );
   const isNewRestaurant = isNewRestaurantRecommendationSource(event.source);
   const isActivityTip = isActivityRecommendationSource(event.source);
+  const isTheaterTip = isTheaterRecommendationSource(event.source);
   const isEvergreenTip = isEvergreenRecommendationSource(
     event.source,
     event.categories,
@@ -337,6 +340,10 @@ export function EventDetailContent({
               playKind?: unknown;
             } | null,
           })
+        : isTheaterTip
+          ? theaterRecommendationLabel({
+              rawPayload: event.rawPayload as { showKind?: unknown } | null,
+            })
         : isFoodTip
           ? event.source === "instagram"
             ? igFoodRecommendationLabel(
@@ -366,18 +373,19 @@ export function EventDetailContent({
         : event.title
       : event.title,
   );
-  const showInstagramReel =
-    isInstagramVideo({
+  const showVideoEmbed =
+    isDetailVideo({
       source: event.source,
       tags: event.tags,
+      url: event.url,
       rawPayload: event.rawPayload as
-        | { mediaType?: unknown; foodTip?: unknown }
+        | { mediaType?: unknown; foodTip?: unknown; isShort?: unknown; videoId?: unknown }
         | null
         | undefined,
-    }) && Boolean(event.url);
-  const instagramMediaUrl =
-    typeof event.rawPayload?.mediaUrl === "string"
-      ? event.rawPayload.mediaUrl
+    });
+  const youtubeVideoId =
+    typeof event.rawPayload?.videoId === "string"
+      ? event.rawPayload.videoId
       : null;
   const heroImageUrl = eventDetailImageUrl({
     source: event.source,
@@ -489,12 +497,14 @@ export function EventDetailContent({
           )}
       </header>
 
-      {showInstagramReel && event.url ? (
-        <InstagramReelEmbed
-          permalink={event.url}
+      {showVideoEmbed && event.url ? (
+        <VideoEmbed
+          source={event.source}
+          url={event.url}
           title={displayTitle}
           posterUrl={event.imageUrl}
-          mediaUrl={instagramMediaUrl}
+          videoId={youtubeVideoId}
+          eventId={event.id}
         />
       ) : (
         <DetailHeroMedia
@@ -765,6 +775,7 @@ function eventPrimaryCtaLabel({
   if (source === "food" || source === "food_deals") return "Read review";
   if (source === "activities") return "Learn more";
   if (source === "instagram") return isReel ? "Watch reel" : "View on Instagram";
+  if (source === "youtube") return "Watch short";
   if (source === "ra") return "Get tickets";
   if (
     sports &&

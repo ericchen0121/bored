@@ -11,6 +11,10 @@ type SaveButtonProps = {
   targetId: string;
   returnTo?: string;
   className?: string;
+  /** Visible hover/focus tooltip (e.g. reels heart ≠ Instagram like). */
+  tooltip?: boolean;
+  /** Fires after a successful toggle with the new saved state. */
+  onToggled?: (saved: boolean) => void;
 };
 
 const AUTH_PROMPT_DISMISS_KEY = "bored:auth-prompt-dismissed";
@@ -36,6 +40,8 @@ export function SaveButton({
   targetId,
   returnTo,
   className,
+  tooltip = false,
+  onToggled,
 }: SaveButtonProps) {
   const { ready, authenticated, isSaved, toggleSaved } = useUser();
   const [busy, setBusy] = useState(false);
@@ -45,6 +51,7 @@ export function SaveButton({
   const animClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saved = isSaved(targetKind, targetId);
+  const actionLabel = saved ? "Unsave" : "Save";
 
   useEffect(() => {
     return () => {
@@ -82,6 +89,7 @@ export function SaveButton({
         trackEventUnsaved({ targetKind, targetId });
         setShowPrompt(false);
       }
+      onToggled?.(nowSaved);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update save");
     } finally {
@@ -90,13 +98,17 @@ export function SaveButton({
   }
 
   return (
-    <div className={`save-heart${className ? ` ${className}` : ""}`}>
+    <div
+      className={`save-heart${tooltip ? " save-heart--tooltip" : ""}${
+        className ? ` ${className}` : ""
+      }`}
+    >
       <button
         type="button"
         className={`save-heart__btn${saved ? " is-saved" : ""}${
           anim === "pop" ? " is-popping" : ""
         }${anim === "pop-out" ? " is-popping-out" : ""}`}
-        aria-label={saved ? "Unsave" : "Save"}
+        aria-label={actionLabel}
         aria-pressed={saved}
         disabled={!ready || busy}
         onClick={() => void onClick()}
@@ -124,6 +136,11 @@ export function SaveButton({
             strokeLinejoin="round"
           />
         </svg>
+        {tooltip ? (
+          <span className="save-heart__tip" role="tooltip">
+            {actionLabel}
+          </span>
+        ) : null}
       </button>
       {error ? <p className="auth-prompt__error">{error}</p> : null}
       {showPrompt && !authenticated ? (

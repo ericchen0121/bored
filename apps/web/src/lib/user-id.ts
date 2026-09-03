@@ -8,17 +8,39 @@ export function isUuid(value: string | null | undefined): value is string {
   return Boolean(value && UUID_RE.test(value));
 }
 
+/**
+ * UUID for anon ids. Prefer crypto.randomUUID; fall back when unavailable
+ * (Safari treats http://LAN-IP as a non-secure context, so randomUUID is missing).
+ */
+function newUuid(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  if (typeof c?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const n = (Math.random() * 16) | 0;
+    const v = ch === "x" ? n : (n & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /** Stable anonymous id for this browser — created on first visit. */
 export function getOrCreateAnonymousUserId(): string {
   if (typeof window === "undefined") return "";
   try {
     const existing = localStorage.getItem(USER_ID_KEY);
     if (isUuid(existing)) return existing;
-    const id = crypto.randomUUID();
+    const id = newUuid();
     localStorage.setItem(USER_ID_KEY, id);
     return id;
   } catch {
-    return crypto.randomUUID();
+    return newUuid();
   }
 }
 
@@ -66,7 +88,7 @@ export function resetToAnonymousIdentity(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(SESSION_KEY);
-    localStorage.setItem(USER_ID_KEY, crypto.randomUUID());
+    localStorage.setItem(USER_ID_KEY, newUuid());
   } catch {
     /* ignore */
   }

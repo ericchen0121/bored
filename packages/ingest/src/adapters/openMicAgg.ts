@@ -15,7 +15,7 @@ export const MAX_OPENMIC_PROPOSALS_PER_RUN = 8;
  */
 export const openMicAggAdapter: SourceAdapter = {
   id: "openmic_agg",
-  description: "Propose SF open mics from SFstandup / OpenMicX style pages",
+  description: "Propose SF + East Bay open mics from SFstandup / OpenMicX style pages",
   async fetch() {
     const proposals: {
       name: string;
@@ -59,7 +59,27 @@ export const openMicAggAdapter: SourceAdapter = {
         });
       });
     } catch (err) {
-      console.warn("[openmic_agg] openmicx failed", (err as Error).message);
+      console.warn("[openmic_agg] openmicx SF failed", (err as Error).message);
+    }
+
+    for (const slug of ["oakland", "berkeley"] as const) {
+      try {
+        const html = await fetchText(`https://openmicx.com/${slug}`);
+        const $ = cheerio.load(html);
+        $("a, h2, h3, li").each((_, el) => {
+          const text = $(el).text().replace(/\s+/g, " ").trim();
+          if (!/open mic|comedy/i.test(text)) return;
+          if (text.length < 8 || text.length > 100) return;
+          proposals.push({
+            name: text,
+            venueName: text,
+            weekday: detectWeekday(text),
+            sourceUrl: `https://openmicx.com/${slug}`,
+          });
+        });
+      } catch (err) {
+        console.warn(`[openmic_agg] openmicx ${slug} failed`, (err as Error).message);
+      }
     }
 
     const pruned = await pruneExcessInactiveProposals();

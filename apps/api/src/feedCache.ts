@@ -37,6 +37,8 @@ export function todayFeedCacheKey(parts: {
   topics: string;
   sources: string;
   limit: number;
+  /** Progressive feed parts — keep event/video caches independent. */
+  videos?: "include" | "exclude" | "only";
 }): string {
   return [
     "today",
@@ -45,6 +47,7 @@ export function todayFeedCacheKey(parts: {
     parts.topics,
     parts.sources,
     String(parts.limit),
+    parts.videos ?? "include",
   ].join("|");
 }
 

@@ -337,3 +337,50 @@ export const outboundClicks = pgTable("outbound_clicks", {
   userId: uuid("user_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * Small ops KV (e.g. refreshed Instagram long-lived user token).
+ * Env remains the bootstrap source; DB wins when set.
+ */
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+/** Admin-managed Instagram scrape targets (merged with code seed list). */
+export const igCreators = pgTable(
+  "ig_creators",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    handle: varchar("handle", { length: 64 }).notNull(),
+    city: varchar("city", { length: 32 }).notNull(),
+    categories: jsonb("categories").$type<string[]>().notNull().default(["food"]),
+    foodInfluencer: boolean("food_influencer").notNull().default(true),
+    cityGuide: boolean("city_guide").notNull().default(false),
+    localOutlet: boolean("local_outlet").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("ig_creators_handle_unique_idx").on(t.handle)],
+);
+
+/** Last Instagram Graph scrape outcome per handle (seed or admin). */
+export const igCreatorScrapes = pgTable("ig_creator_scrapes", {
+  handle: varchar("handle", { length: 64 }).primaryKey(),
+  lastScrapedAt: timestamp("last_scraped_at", { withTimezone: true }).notNull(),
+  lastOk: boolean("last_ok").notNull().default(false),
+  lastHttpStatus: integer("last_http_status"),
+  lastError: text("last_error"),
+  mediaFetched: integer("media_fetched").notNull().default(0),
+  eventsEmitted: integer("events_emitted").notNull().default(0),
+  profilePictureUrl: text("profile_picture_url"),
+});

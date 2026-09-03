@@ -1,5 +1,9 @@
-import { db, events, films, ingestRuns, showtimes, theaters } from "@bored/db";
-import { EVERGREEN_TIP_STALE_DAYS, resolveEventKind } from "@bored/shared";
+import { db, events, films, ingestRuns, signals, showtimes, theaters } from "@bored/db";
+import {
+  EVERGREEN_TIP_STALE_DAYS,
+  resolveEventKind,
+  VIDEO_OPENED_TTL_MS,
+} from "@bored/shared";
 import { and, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import type { NormalizedEvent, NormalizedShowtimeBatch, SourceAdapter } from "./types.js";
 import { eventContentHash } from "./types.js";
@@ -10,6 +14,12 @@ import {
   comedyVenueAdapter,
   comedyVenueChicagoAdapter,
   comedyVenueLaAdapter,
+  musicVenueAdapter,
+  musicVenueChicagoAdapter,
+  musicVenueLaAdapter,
+  stageVenueAdapter,
+  stageVenueChicagoAdapter,
+  stageVenueLaAdapter,
   ticketmasterAdapter,
   ticketmasterChicagoAdapter,
   ticketmasterLaAdapter,
@@ -19,14 +29,17 @@ import { recurringComedyAdapter } from "./adapters/recurringComedy.js";
 import { partifulAdapter } from "./adapters/partiful.js";
 import { newsletterAdapter } from "./adapters/newsletter.js";
 import { instagramAdapter } from "./adapters/instagram.js";
+import { youtubeAdapter } from "./adapters/youtube.js";
 import { openMicAggAdapter } from "./adapters/openMicAgg.js";
 import { indieTheaterAdapter } from "./adapters/indieTheater.js";
 import { foodAdapter } from "./adapters/food.js";
 import { foodDealsAdapter } from "./adapters/foodDeals.js";
 import { activitiesAdapter } from "./adapters/activities.js";
+import { theaterAdapter } from "./adapters/theater.js";
 import { newRestaurantsAdapter } from "./adapters/newRestaurants.js";
 import { do312Adapter } from "./adapters/do312.js";
 import { dolaAdapter } from "./adapters/dola.js";
+import { musicFestivalAdapter } from "./adapters/musicFestivals.js";
 import { chicagoCheapAdapter } from "./adapters/chicagoCheap.js";
 
 import { raChicagoAdapter, raLaAdapter, raSfAdapter } from "./adapters/ra.js";
@@ -35,6 +48,7 @@ import {
   eventbriteChicagoAdapter,
   eventbriteLaAdapter,
 } from "./adapters/eventbrite.js";
+import { PHASE1_ADAPTER_IDS } from "./adapterIds.js";
 
 export const ALL_ADAPTERS: SourceAdapter[] = [
   // Ticket platforms before 19hz so finalize can skip URL/id twins in-run.
@@ -57,16 +71,25 @@ export const ALL_ADAPTERS: SourceAdapter[] = [
   comedyVenueAdapter,
   comedyVenueChicagoAdapter,
   comedyVenueLaAdapter,
+  stageVenueAdapter,
+  stageVenueChicagoAdapter,
+  stageVenueLaAdapter,
+  musicVenueAdapter,
+  musicVenueChicagoAdapter,
+  musicVenueLaAdapter,
+  musicFestivalAdapter,
   recurringComedyAdapter,
   moviesAdapter,
   partifulAdapter,
   newsletterAdapter,
   instagramAdapter,
+  youtubeAdapter,
   openMicAggAdapter,
   indieTheaterAdapter,
   foodAdapter,
   foodDealsAdapter,
   activitiesAdapter,
+  theaterAdapter,
   newRestaurantsAdapter,
   do312Adapter,
   dolaAdapter,
@@ -74,31 +97,7 @@ export const ALL_ADAPTERS: SourceAdapter[] = [
 ];
 
 export const PHASE1_ADAPTERS = ALL_ADAPTERS.filter((a) =>
-  [
-    "19hz",
-    "19hz_chi",
-    "19hz_la",
-    "funcheap",
-    "luma",
-    "luma_chi",
-    "luma_la",
-    "ticketmaster",
-    "ticketmaster_chi",
-    "ticketmaster_la",
-    "comedy_venue",
-    "comedy_venue_chi",
-    "comedy_venue_la",
-    "recurring",
-    "do312",
-    "dola",
-    "chicago_cheap",
-    "ra_chi",
-    "ra_la",
-    "ra_sf",
-    "eventbrite",
-    "eventbrite_chi",
-    "eventbrite_la",
-  ].includes(a.id),
+  (PHASE1_ADAPTER_IDS as readonly string[]).includes(a.id),
 );
 
 /**
@@ -338,7 +337,33 @@ export async function purgeStaleEvergreenTips(
     )
     .returning({ id: events.id });
 
-  return deletedCurated.length + deletedIg.length;
+  const deletedYt = await db
+    .delete(events)
+    .where(
+      and(
+        eq(events.source, "youtube"),
+        sql`${events.categories} @> '["food"]'::jsonb`,
+        lt(events.lastSeenAt, cutoff),
+      ),
+    )
+    .returning({ id: events.id });
+
+  return deletedCurated.length + deletedIg.length + deletedYt.length;
+}
+
+/** Drop impressed/opened rows past the opened TTL (ranking no longer uses them). */
+export async function pruneStaleVideoSignals(): Promise<number> {
+  const cutoff = new Date(Date.now() - VIDEO_OPENED_TTL_MS);
+  const deleted = await db
+    .delete(signals)
+    .where(
+      and(
+        inArray(signals.type, ["impressed", "opened"]),
+        lt(signals.createdAt, cutoff),
+      ),
+    )
+    .returning({ id: signals.id });
+  return deleted.length;
 }
 
 /**
@@ -490,12 +515,15 @@ export async function upsertEvents(list: NormalizedEvent[]): Promise<number> {
             else coalesce(excluded.url, ${events.url})
           end`,
           // Prefer a real flyer over a TM category placeholder (/dam/c/).
+          // Also refresh curated Unsplash placeholders when ingest ships a new URL.
           imageUrl: sql`case
             when excluded.image_url is null then ${events.imageUrl}
             when ${events.imageUrl} is null or btrim(${events.imageUrl}) = ''
               then excluded.image_url
             when ${events.imageUrl} like '%ticketm.net/dam/c/%'
               and excluded.image_url not like '%ticketm.net/dam/c/%'
+              then excluded.image_url
+            when ${events.imageUrl} like '%images.unsplash.com/photo-%'
               then excluded.image_url
             else ${events.imageUrl}
           end`,
@@ -762,18 +790,20 @@ export async function runAll(adapters: SourceAdapter[] = ALL_ADAPTERS) {
   }
   const pruned19hz = await prune19hzPlatformTwins();
   const staleTips = await purgeStaleEvergreenTips();
+  const staleVideoSignals = await pruneStaleVideoSignals();
   const pastEvents = await purgePastEvents();
   const pastShowtimes = await purgePastShowtimes();
   const staleShowtimes = await purgeStaleShowtimes();
   if (
     pruned19hz > 0 ||
     staleTips > 0 ||
+    staleVideoSignals > 0 ||
     pastEvents > 0 ||
     pastShowtimes > 0 ||
     staleShowtimes > 0
   ) {
     console.log(
-      `[ingest] GC pruned ${pruned19hz} 19hz platform twins, ${staleTips} stale tips, ${pastEvents} past events, ${pastShowtimes} past showtimes, ${staleShowtimes} stale showtimes`,
+      `[ingest] GC pruned ${pruned19hz} 19hz platform twins, ${staleTips} stale tips, ${staleVideoSignals} video signals, ${pastEvents} past events, ${pastShowtimes} past showtimes, ${staleShowtimes} stale showtimes`,
     );
   }
   return total;

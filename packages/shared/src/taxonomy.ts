@@ -185,6 +185,10 @@ const TAG_DISPLAY_NOISE = new Set([
   "found_sf",
   "infatuation",
   "activity",
+  "theater",
+  "broadway",
+  "musical",
+  "stage_venue",
   "iconic",
   "local_gem",
   "hike",
@@ -379,6 +383,7 @@ export type EventTypeKind =
   | "tech"
   | "food"
   | "arts"
+  | "theater"
   | "outdoors"
   | "nightlife"
   | "family"
@@ -399,6 +404,7 @@ const TYPE_META: Record<EventTypeKind, EventTypeMeta> = {
   tech: { kind: "tech", label: "Tech", className: "type-tech" },
   food: { kind: "food", label: "Food", className: "type-food" },
   arts: { kind: "arts", label: "Arts", className: "type-arts" },
+  theater: { kind: "theater", label: "Theater", className: "type-theater" },
   outdoors: { kind: "outdoors", label: "Outdoors", className: "type-outdoors" },
   nightlife: { kind: "nightlife", label: "Nightlife", className: "type-nightlife" },
   family: { kind: "family", label: "Family", className: "type-family" },
@@ -415,6 +421,7 @@ const TYPE_PRIORITY: EventTypeKind[] = [
   "tech",
   "food",
   "arts",
+  "theater",
   "outdoors",
   "nightlife",
   "family",
@@ -436,8 +443,12 @@ function categoryToKind(cat: string): EventTypeKind | null {
 }
 
 const VENUE_TYPE_HINTS: { re: RegExp; kind: EventTypeKind }[] = [
-  { re: /cobb|punch\s*line|punchline|coit\s*comedy|neck of the woods|open\s*mic|zanies|laugh factory|comedy bar|second city|lincoln lodge|annoyance|io theater|io improv/i, kind: "comedy" },
-  { re: /audio|the mid|public works|temple|dna lounge|1015|bill graham|fillmore|warfield|fox theater|greek theatre|independent|slim'?s|great american/i, kind: "music" },
+  // Dedicated comedy rooms only — mixed music/comedy venues (Neck of the Woods)
+  // are classified from title/categories instead.
+  { re: /cobb|punch\s*line|punchline|coit\s*comedy|zanies|laugh factory|comedy bar|second city|lincoln lodge|annoyance|io theater|io improv|comedy store|hollywood improv|chicago improv|the function|golden gate comedy|mabuhay|throckmorton|stork club|stay gold|breakroom|alameda comedy|fireside lounge/i, kind: "comedy" },
+  { re: /mr\.?\s*tipple|black cat|sheba piano|dawn club|keys jazz|bird\s*&\s*beckett|royal cuckoo|harris'?(\s+restaurant)?|yoshi'?s|green mill|jazz showcase|andy'?s jazz|catalina jazz|baked potato/i, kind: "music" },
+  { re: /orpheum|golden gate theatre|curran|geary theater|sf playhouse|berkeley rep|goodman theatre|steppenwolf|chicago shakespeare|pantages|ahmanson|mark taper|geffen playhouse|cadillac palace|nederlander|ambassador theatre|broadwaysf|broadway in chicago|centertheatregroup/i, kind: "theater" },
+  { re: /audio|the mid|public works|temple|dna lounge|1015|bill graham|fillmore|warfield|fox theater|greek theatre|independent|slim'?s|august hall|great american|bottom of the hill|the chapel|cafe du nord|bimbo'?s|brick\s*&\s*mortar|kilowatt|knockout|boom boom|rickshaw stop|hemlock|make-?out room|hotel utah|el rio|empty bottle|metro chicago|thalia hall|salt shed|beat kitchen|kingston mines|buddy guy|troubadour|whisky a go go|fonda|el rey|teragram|lodge room|zebulon|the smell|echoplex|wiltern|palladium/i, kind: "music" },
   { re: /alamo|roxie|castro theatre|opera plaza|landmark|sffilm|balboa/i, kind: "movies" },
 ];
 
@@ -448,27 +459,115 @@ export const COMEDY_SUBTYPES = [
   "comedy.underground",
 ] as const;
 
+/**
+ * Infer a comedy.* category from title / venue / coarse TM labels.
+ * Open mics are comedy in this product (SFStandup / OpenMicX convention).
+ * Dedicated club rooms → comedy.club; title-only comedy nights → club too.
+ */
+export function inferComedyCategory(opts: {
+  title?: string | null;
+  venueName?: string | null;
+  segment?: string | null;
+  genre?: string | null;
+}): (typeof COMEDY_SUBTYPES)[number] | null {
+  const title = opts.title ?? "";
+  const venue = opts.venueName ?? "";
+  const segment = opts.segment ?? "";
+  const genre = opts.genre ?? "";
+  const taxonomyBlob = `${segment} ${genre}`;
+
+  if (/\bopen\s*mic\b/i.test(title) || /\bopen\s*mic\b/i.test(venue)) {
+    return "comedy.open_mic";
+  }
+  if (
+    /\b(comedy|stand-?up|standup|improv)\b/i.test(title) ||
+    /comedy/i.test(taxonomyBlob)
+  ) {
+    if (/\b(underground|alt\b|alternative)\b/i.test(title)) {
+      return "comedy.underground";
+    }
+    if (/\bshowcase\b/i.test(title)) return "comedy.showcase";
+    return "comedy.club";
+  }
+  // Pure comedy rooms only — not mixed music venues (e.g. Neck of the Woods).
+  if (
+    /cobb|punch\s*line|punchline|comedy store|laugh factory|comedy bar|second city|lincoln lodge|annoyance|io improv|chicago improv|coit\s*comedy|golden gate comedy|alameda comedy|zanies|flappers|largo/i.test(
+      venue,
+    )
+  ) {
+    return "comedy.club";
+  }
+  return null;
+}
+
+/** True when listing should not be treated as a concert / listen-link music row. */
+export function isComedyListing(item: {
+  title?: string | null;
+  venueName?: string | null;
+  categories?: string[] | null;
+  source?: string | null;
+  tags?: string[] | null;
+}): boolean {
+  const cats = item.categories ?? [];
+  if (cats.some((c) => c.startsWith("comedy."))) return true;
+  if (item.source === "comedy_venue" || item.source === "openmic_agg") {
+    return true;
+  }
+  const title = item.title ?? "";
+  const venue = item.venueName ?? "";
+  const tags = (item.tags ?? []).join(" ");
+  const text = `${title} ${venue} ${tags}`;
+  if (/\b(comedy|standup|stand-up|stand up|improv|open mic)\b/i.test(text)) {
+    return true;
+  }
+  return inferComedyCategory({ title, venueName: venue }) != null;
+}
+
+/**
+ * Categories allowed on `recurring_shows.comedy_subtype` (legacy column name).
+ * Comedy rooms + local live-music residencies (jazz bars, etc.).
+ */
+export const RECURRING_CATEGORIES = [
+  ...COMEDY_SUBTYPES,
+  "music.jazz",
+  "music.live",
+  "music.blues",
+  "music.punk",
+  "music.rock",
+] as const;
+
+export type RecurringCategory = (typeof RECURRING_CATEGORIES)[number];
+
+export function isRecurringCategory(value: string): value is RecurringCategory {
+  return (RECURRING_CATEGORIES as readonly string[]).includes(value);
+}
+
 export const EVENT_SOURCES = [
   "19hz",
   "funcheap",
   "luma",
   "ticketmaster",
   "comedy_venue",
+  "stage_venue",
+  "music_venue",
   "recurring",
   "partiful",
   "newsletter",
   "instagram",
+  "youtube",
   "openmic_agg",
   "indie_theater",
   "food",
   "food_deals",
   "activities",
+  "theater",
   "new_restaurants",
   "do312",
   "dola",
   "chicago_cheap",
   "ra",
   "eventbrite",
+  "music_festival",
   "manual",
 ] as const;
 
@@ -481,21 +580,26 @@ export const EVENT_SOURCE_LABELS: Record<EventSource, string> = {
   luma: "Luma",
   ticketmaster: "Ticketmaster",
   comedy_venue: "Comedy venue",
+  stage_venue: "Live theater",
+  music_venue: "Live music venue",
   recurring: "Recurring",
   partiful: "Partiful",
   newsletter: "Newsletter",
   instagram: "Instagram",
+  youtube: "YouTube",
   openmic_agg: "Open mic",
   indie_theater: "Indie theater",
   food: "Food",
   food_deals: "Food deals",
   activities: "Activities",
+  theater: "Theater",
   new_restaurants: "New restaurants",
   do312: "Do312",
   dola: "DoLA",
   chicago_cheap: "Chicago on the Cheap",
   ra: "Resident Advisor",
   eventbrite: "Eventbrite",
+  music_festival: "Music festivals",
   manual: "Manual",
 };
 
@@ -512,17 +616,21 @@ const TAG_TYPE_HINTS: { re: RegExp; kind: EventTypeKind }[] = [
 const SOURCE_TYPE_HINT: Partial<Record<EventSource, EventTypeKind>> = {
   "19hz": "music",
   comedy_venue: "comedy",
-  recurring: "comedy",
+  stage_venue: "theater",
+  music_venue: "music",
+  // Recurring rows always set comedy.* / music.* categories — no source default.
   luma: "tech",
   partiful: "outdoors",
   indie_theater: "movies",
   food: "food",
   new_restaurants: "food",
   activities: "outdoors",
+  theater: "theater",
   do312: "nightlife",
   dola: "nightlife",
   chicago_cheap: "free",
   ra: "music",
+  music_festival: "music",
 };
 
 /**
@@ -673,12 +781,14 @@ export const FEED_FILTER_SOURCES = [
   "indie_theater",
   "food",
   "instagram",
+  "youtube",
   "recurring",
   "do312",
   "dola",
   "chicago_cheap",
   "ra",
   "eventbrite",
+  "music_festival",
 ] as const;
 
 export type FeedFilterSource = (typeof FEED_FILTER_SOURCES)[number];
@@ -694,8 +804,10 @@ export const SF_FEED_FILTER_SOURCES = [
   "indie_theater",
   "food",
   "instagram",
+  "youtube",
   "recurring",
   "eventbrite",
+  "music_festival",
 ] as const satisfies readonly FeedFilterSource[];
 
 /** Chicago feed chips */
@@ -709,7 +821,10 @@ export const CHI_FEED_FILTER_SOURCES = [
   "ticketmaster",
   "eventbrite",
   "food",
+  "instagram",
+  "youtube",
   "recurring",
+  "music_festival",
 ] as const satisfies readonly FeedFilterSource[];
 
 /** Los Angeles feed chips */
@@ -721,6 +836,8 @@ export const LA_FEED_FILTER_SOURCES = [
   "ticketmaster",
   "eventbrite",
   "food",
+  "instagram",
+  "youtube",
   "recurring",
 ] as const satisfies readonly FeedFilterSource[];
 
@@ -729,9 +846,15 @@ export function expandSourceFilter(sources: string[]): Set<string> {
   const out = new Set<string>();
   for (const s of sources) {
     out.add(s);
-    if (s === "ticketmaster") out.add("comedy_venue");
+    if (s === "ticketmaster") {
+      out.add("comedy_venue");
+      out.add("music_venue");
+      out.add("stage_venue");
+    }
     if (s === "food") out.add("food_deals");
     if (s === "food") out.add("new_restaurants");
+    if (s === "food") out.add("instagram");
+    if (s === "food") out.add("youtube");
   }
   return out;
 }
@@ -766,6 +889,7 @@ export function parseFeedSources(
 /** User-facing activity filters — not tied to ingest source */
 export const FEED_TOPICS = [
   "concerts",
+  "music_festivals",
   "comedy",
   "movies",
   "sports",
@@ -775,6 +899,7 @@ export const FEED_TOPICS = [
   "food",
   "nightlife",
   "arts",
+  "theater",
   "activities",
 ] as const;
 
@@ -787,6 +912,7 @@ export function isFeedTopic(value: string): value is FeedTopic {
 
 export const FEED_TOPIC_LABELS: Record<FeedTopic, string> = {
   concerts: "Concerts",
+  music_festivals: "Music festivals",
   comedy: "Comedy",
   movies: "Movies",
   sports: "Sports",
@@ -796,12 +922,14 @@ export const FEED_TOPIC_LABELS: Record<FeedTopic, string> = {
   food: "Food & drink",
   nightlife: "Nightlife",
   arts: "Arts & culture",
+  theater: "Theater",
   activities: "Things to do",
 };
 
 /** Compact emoji prefix for topic chips / carousels */
 export const FEED_TOPIC_EMOJI: Record<FeedTopic, string> = {
   concerts: "🎵",
+  music_festivals: "🎪",
   comedy: "🎙️",
   movies: "🎬",
   sports: "🏟️",
@@ -811,6 +939,7 @@ export const FEED_TOPIC_EMOJI: Record<FeedTopic, string> = {
   food: "🍽️",
   nightlife: "🌙",
   arts: "🎨",
+  theater: "🎭",
   activities: "🚶",
 };
 
@@ -844,6 +973,9 @@ export type FeedTopicMatchInput = {
 
 const FESTIVAL_RE =
   /\b(festival|street fair|streetfair|block party|night market|carnival|fair)\b/i;
+/** Food/wine/film/market fests — not multi-day music festivals. */
+const NON_MUSIC_FESTIVAL_RE =
+  /\b(street fair|streetfair|block party|night market|harvest festival|wine festival|whisk(e)?y festival|food festival|film festival|margarita festival|market festival|film fest|healthy living festival|senior festival)\b/i;
 /** Sport signals — not bare "vs." (battle raps, mashups, "80s vs 90s"). */
 const SPORTS_RE =
   /\b(sports?|game day|baseball|basketball|football|soccer|hockey|volleyball|giants|warriors|49ers|athletics|sharks)\b/i;
@@ -868,13 +1000,112 @@ export function isSportsListing(item: FeedTopicMatchInput): boolean {
   );
 }
 
+/** Multi-day or ticketed music festival — not street fairs or food/wine/film fests. */
+export function isMusicFestivalListing(item: FeedTopicMatchInput): boolean {
+  const tags = (item.tags ?? []).map((t) => normalizeTagToken(t));
+  const title = (item.title ?? "").toLowerCase();
+  const tagBlob = tags.join(" ");
+  const text = `${title} ${tagBlob}`;
+
+  const hasFest =
+    FESTIVAL_RE.test(tagBlob) ||
+    FESTIVAL_RE.test(title) ||
+    /\bfest\b/i.test(title);
+  if (!hasFest) return false;
+  if (NON_MUSIC_FESTIVAL_RE.test(text)) return false;
+  if (
+    /\b(film|movie|cinema|screening)\b/i.test(text) &&
+    !isMusicListing(item)
+  ) {
+    return false;
+  }
+  if (isMusicListing(item)) return true;
+  return /\b(music festival|music fest|world music|concert festival|dj festival|dance festival|live music festival|cumbia)\b/i.test(
+    text,
+  );
+}
+
 /** Concert / DJ / live-music listing — safe for Spotify-style listen links. */
 export function isMusicListing(item: FeedTopicMatchInput): boolean {
   if (isSportsListing(item)) return false;
+  if (isComedyListing(item)) return false;
   const cats = item.categories;
   if (cats.some((c) => c.startsWith("music."))) return true;
-  if (item.source === "19hz" || item.source === "ra") return true;
+  if (item.source === "19hz" || item.source === "ra" || item.source === "music_venue") {
+    return true;
+  }
   return false;
+}
+
+/** Live stage theater — not cinema showtimes. */
+export function isTheaterListing(item: FeedTopicMatchInput): boolean {
+  if (item.kind === "movie_showtime") return false;
+  const cats = item.categories;
+  if (cats.some((c) => c.startsWith("movies"))) return false;
+  if (item.source === "indie_theater") return false;
+  if (item.source === "theater" || item.source === "stage_venue") return true;
+
+  const tags = (item.tags ?? []).map((t) => normalizeTagToken(t));
+  const title = (item.title ?? "").toLowerCase();
+  const venue = (item.venueName ?? "").toLowerCase();
+  const tagBlob = tags.join(" ");
+  const text = `${title} ${tagBlob} ${venue}`;
+
+  if (/\b(cinema|film screening|movie night)\b/i.test(text)) return false;
+  if (
+    cats.includes("arts") &&
+    /\b(broadway|musical|play|opera|ballet|stage)\b/i.test(text)
+  ) {
+    return true;
+  }
+  for (const hint of VENUE_TYPE_HINTS) {
+    if (hint.kind === "theater" && hint.re.test(venue)) return true;
+  }
+  return (
+    /\b(theatre|theater)\b/i.test(title) ||
+    (/\b(theatre|theater)\b/i.test(tagBlob) &&
+      !/\b(movie|cinema|film)\b/i.test(text))
+  );
+}
+
+/** Topics fully covered by filtering the unfiltered All timed list. */
+export const FEED_TOPICS_DENSE_FROM_ALL = [
+  "concerts",
+  "nightlife",
+  "free",
+  "arts",
+  "sports",
+  "festivals",
+] as const satisfies readonly FeedTopic[];
+
+/**
+ * Topics whose inventory needs curated/showtimes sources beyond All.
+ * Server must not derive these from the All cache.
+ */
+export const FEED_TOPICS_NEED_SERVER_ENRICH = [
+  "food",
+  "happy_hours",
+  "activities",
+  "movies",
+  "comedy",
+  "music_festivals",
+  "theater",
+] as const satisfies readonly FeedTopic[];
+
+export function feedTopicsFullyCoveredByAll(
+  topics: readonly FeedTopic[],
+): boolean {
+  if (!topics.length) return true;
+  const dense = new Set<string>(FEED_TOPICS_DENSE_FROM_ALL);
+  return topics.every((t) => dense.has(t));
+}
+
+export function feedTopicsNeedServerEnrich(
+  topics: readonly FeedTopic[],
+): boolean {
+  if (!topics.length) return false;
+  const need = new Set<string>(FEED_TOPICS_NEED_SERVER_ENRICH);
+  return topics.some((t) => need.has(t));
 }
 
 /** Whether a feed row matches a topic chip (OR across selected topics at filter time) */
@@ -890,7 +1121,12 @@ export function matchesFeedTopic(
   const text = `${title} ${tagBlob} ${venue}`;
 
   switch (topic) {
+    case "music_festivals":
+      if (item.source === "music_festival") return true;
+      return isMusicFestivalListing(item);
     case "concerts":
+      if (isMusicFestivalListing(item)) return false;
+      if (isComedyListing(item)) return false;
       if (isMusicListing(item)) return true;
       if (/\b(concert|live music|tour\b|dj set|\bdj\b)\b/i.test(text)) return true;
       if (
@@ -905,17 +1141,7 @@ export function matchesFeedTopic(
       }
       return false;
     case "comedy":
-      if (cats.some((c) => c.startsWith("comedy."))) return true;
-      if (item.source === "comedy_venue" || item.source === "recurring") {
-        return true;
-      }
-      if (/\b(comedy|standup|stand-up|stand up|improv|open mic)\b/i.test(text)) {
-        return true;
-      }
-      for (const hint of VENUE_TYPE_HINTS) {
-        if (hint.kind === "comedy" && hint.re.test(venue)) return true;
-      }
-      return false;
+      return isComedyListing(item);
     case "movies":
       return (
         item.kind === "movie_showtime" ||
@@ -938,18 +1164,20 @@ export function matchesFeedTopic(
         item.source === "food" ||
         item.source === "food_deals" ||
         item.source === "new_restaurants" ||
-        item.source === "instagram"
+        item.source === "instagram" ||
+        item.source === "youtube"
       );
     case "nightlife":
       return cats.includes("nightlife") || tags.includes("bars");
     case "arts":
+      if (isTheaterListing(item)) return false;
       return (
         cats.includes("arts") ||
-        /\b(theatre|theater|museum|gallery|exhibit|dance|ballet|opera)\b/i.test(
-          tagBlob,
-        ) ||
-        /\b(theatre|theater|museum|gallery|exhibit)\b/i.test(title)
+        /\b(museum|gallery|exhibit|dance|ballet|opera)\b/i.test(tagBlob) ||
+        /\b(museum|gallery|exhibit)\b/i.test(title)
       );
+    case "theater":
+      return isTheaterListing(item);
     case "activities":
       return item.source === "activities";
     default:
@@ -998,7 +1226,13 @@ export function registrationStatusLabel(
   return REGISTRATION_STATUS_LABELS[status as RegistrationStatus] ?? status;
 }
 
-export const SIGNAL_TYPES = ["saved", "dismissed", "going", "opened"] as const;
+export const SIGNAL_TYPES = [
+  "saved",
+  "dismissed",
+  "going",
+  "opened",
+  "impressed",
+] as const;
 export type SignalType = (typeof SIGNAL_TYPES)[number];
 
 export const FEED_KINDS = ["event", "movie_showtime", "recommendation"] as const;

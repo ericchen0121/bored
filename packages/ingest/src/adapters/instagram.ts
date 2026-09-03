@@ -1,56 +1,30 @@
-import { suggestionStartsAt } from "@bored/shared";
+import {
+  isLocalVideoOutlet,
+  isVideoContentLocalToMetro,
+  suggestionStartsAt,
+  VIDEO_TIP_MAX_AGE_MS,
+  videoLocalityText,
+  videoNeighborhoodFromText,
+} from "@bored/shared";
 import {
   contentHash,
   type NormalizedEvent,
   type SourceAdapter,
 } from "../types.js";
-
-type CuratedAccount = {
-  handle: string;
-  categories: string[];
-  /** Reels/posts from this account are treated as SF food tips, not just events. */
-  foodInfluencer?: boolean;
-};
-
-/**
- * Phase 2: curated SF Instagram accounts → caption-derived candidates.
- * Uses Instagram Graph when IG_ACCESS_TOKEN + IG_BUSINESS_USER_ID are set;
- * otherwise returns empty (no scrape without credentials).
- */
-const CURATED_ACCOUNTS: CuratedAccount[] = [
-  // Food / dining outlets
-  { handle: "eater_sf", categories: ["food"] },
-  { handle: "theinfatuation", categories: ["food"] },
-  { handle: "infatuationsf", categories: ["food"] },
-  { handle: "foundsf", categories: ["food"] },
-  { handle: "tablehopper", categories: ["food"] },
-  { handle: "sfchronicle_food", categories: ["food"], foodInfluencer: true },
-  { handle: "timeoutsanfrancisco", categories: ["food", "nightlife", "arts"] },
-  { handle: "onlyinsf", categories: ["food", "outdoors"] },
-  // SF food influencers (reels-first)
-  { handle: "sherryeatworld", categories: ["food"], foodInfluencer: true },
-  { handle: "cheycheyfromthebay", categories: ["food"], foodInfluencer: true },
-  { handle: "violetwitchel", categories: ["food"], foodInfluencer: true },
-  { handle: "thesnacksensei", categories: ["food"], foodInfluencer: true },
-  { handle: "eatwithslay", categories: ["food"], foodInfluencer: true },
-  { handle: "pastrywithjenn", categories: ["food"], foodInfluencer: true },
-  { handle: "festusfeasts", categories: ["food"], foodInfluencer: true },
-  { handle: "oishiimoments", categories: ["food"], foodInfluencer: true },
-  { handle: "jor.favfoodie", categories: ["food"], foodInfluencer: true },
-  { handle: "angelinahong_", categories: ["food"], foodInfluencer: true },
-  {
-    handle: "confession.of.a.foodie",
-    categories: ["food"],
-    foodInfluencer: true,
-  },
-  { handle: "allie.eats", categories: ["food"], foodInfluencer: true },
-  { handle: "taratastessf", categories: ["food"], foodInfluencer: true },
-  { handle: "neverendingflavor", categories: ["food"], foodInfluencer: true },
-];
+import {
+  maybeAutoRenewIgAccessToken,
+  resolveIgAccessToken,
+} from "../instagramAccessToken.js";
+import {
+  listActiveIgCreators,
+  recordIgCreatorScrape,
+  SEED_IG_CREATORS,
+  type IgCreatorAccount,
+} from "../igCreators.js";
 
 const MEDIA_FIELDS =
-  "caption,permalink,timestamp,media_type,media_url,thumbnail_url";
-const MEDIA_LIMIT = 25;
+  "caption,permalink,timestamp,media_type,media_product_type,media_url,thumbnail_url,children{media_type,media_url,thumbnail_url}";
+const MEDIA_LIMIT = 30;
 
 type IgMedia = {
   id: string;
@@ -58,16 +32,18 @@ type IgMedia = {
   permalink?: string;
   timestamp?: string;
   media_type?: string;
+  media_product_type?: string;
   media_url?: string;
   thumbnail_url?: string;
+  children?: { data?: IgMedia[] };
 };
 
 export const instagramAdapter: SourceAdapter = {
   id: "instagram",
   description:
-    "Curated SF Instagram accounts — food influencers, reels, city tips",
+    "Curated Instagram accounts — food influencers, reels, city guides, events",
   async fetch() {
-    const token = process.env.IG_ACCESS_TOKEN;
+    const token = await resolveIgAccessToken();
     const userId = process.env.IG_BUSINESS_USER_ID;
     const events: NormalizedEvent[] = [];
 
@@ -78,64 +54,154 @@ export const instagramAdapter: SourceAdapter = {
       return { events: [] };
     }
 
-    for (const acct of CURATED_ACCOUNTS) {
+    const renew = await maybeAutoRenewIgAccessToken();
+    if (renew.renewed) {
+      console.log(
+        `[instagram] auto-renewed access token (expires in ${renew.status.expiresInDays ?? "?"}d)`,
+      );
+    } else if (
+      renew.status.expiresInDays != null &&
+      renew.status.expiresInDays < 7
+    ) {
+      console.warn(
+        `[instagram] access token expires in ${renew.status.expiresInDays}d — renew via /admin/instagram`,
+      );
+    }
+
+    const accessToken = (await resolveIgAccessToken()) ?? token;
+    const accounts = await listActiveIgCreators();
+    console.log(`[instagram] scraping ${accounts.length} creators`);
+
+    for (const acct of accounts) {
       try {
-        const searchUrl = `https://graph.facebook.com/v21.0/${userId}?fields=business_discovery.username(${acct.handle}){media.limit(${MEDIA_LIMIT}){${MEDIA_FIELDS}}}&access_token=${token}`;
+        const searchUrl = `https://graph.facebook.com/v21.0/${userId}?fields=business_discovery.username(${acct.handle}){username,profile_picture_url,media.limit(${MEDIA_LIMIT}){${MEDIA_FIELDS}}}&access_token=${accessToken}`;
         const res = await fetch(searchUrl);
         if (!res.ok) {
           console.warn(`[instagram] ${acct.handle} ${res.status}`);
+          await recordIgCreatorScrape({
+            handle: acct.handle,
+            ok: false,
+            httpStatus: res.status,
+            error: `HTTP ${res.status}`,
+          });
           continue;
         }
         const data = (await res.json()) as {
           business_discovery?: {
+            username?: string;
+            profile_picture_url?: string;
             media?: { data?: IgMedia[] };
           };
+          error?: { message?: string };
         };
+        if (data.error || !data.business_discovery) {
+          const msg = data.error?.message ?? "No business_discovery payload";
+          console.warn(`[instagram] ${acct.handle} ${msg}`);
+          await recordIgCreatorScrape({
+            handle: acct.handle,
+            ok: false,
+            httpStatus: res.status,
+            error: msg,
+          });
+          continue;
+        }
         const mediaList = sortMediaForIngest(
           data.business_discovery?.media?.data ?? [],
         );
+        const profilePictureUrl =
+          data.business_discovery.profile_picture_url ?? null;
+        let emitted = 0;
 
         for (const media of mediaList) {
           const caption = media.caption ?? "";
           if (!caption.trim()) continue;
 
-          const isReel = media.media_type === "REELS";
-          const isVideo = media.media_type === "VIDEO";
+          const isReel =
+            media.media_type === "REELS" ||
+            media.media_product_type === "REELS";
+          const isVideo = media.media_type === "VIDEO" || isReel;
+          const isVideoPost = isReel || media.media_type === "VIDEO";
+          const playableUrl = playableVideoUrl(media);
+          if (isVideoPost && !playableUrl) continue;
+
+          const blob = videoLocalityText([
+            caption,
+            media.permalink,
+            acct.handle,
+          ]);
+          const inMetro = isVideoContentLocalToMetro({
+            text: blob,
+            metro: acct.city,
+            handle: acct.handle,
+            localOutlet:
+              Boolean(acct.localOutlet) ||
+              isLocalVideoOutlet(acct.handle, acct.city),
+          });
+          if (!inMetro) continue;
+
           const isFoodTip =
             acct.categories.includes("food") &&
-            mentionsSfArea(caption) &&
             (looksLikeFoodTip(caption) ||
-              ((isReel || isVideo) && Boolean(acct.foodInfluencer)));
+              looksLikeOpening(caption) ||
+              // Food influencers: keep local reels even without tip keywords.
+              (Boolean(acct.foodInfluencer) && isVideoPost));
+
+          const isCityGuideTip =
+            Boolean(acct.cityGuide) &&
+            isVideoPost &&
+            (looksLikeCityGuide(caption) ||
+              looksLikeFoodTip(caption) ||
+              looksLikeOpening(caption) ||
+              // Metro guides: any substantial local reel.
+              caption.trim().length >= 40);
+
           const isEvent = looksLikeEvent(caption);
 
-          if (!isFoodTip && !isEvent) continue;
+          if (!isFoodTip && !isCityGuideTip && !isEvent) continue;
 
           const published = media.timestamp ? new Date(media.timestamp) : null;
           const stableId = contentHash(["instagram", media.id]);
-          const startsAt = isFoodTip
+          const isTip = isFoodTip || isCityGuideTip;
+          if (
+            isTip &&
+            published &&
+            !Number.isNaN(published.getTime()) &&
+            Date.now() - published.getTime() > VIDEO_TIP_MAX_AGE_MS
+          ) {
+            continue;
+          }
+          const startsAt = isTip
             ? suggestionStartsAt(stableId, published)
             : guessEventStart(caption, published) ??
               new Date(Date.now() + 86400000 * 3);
 
           const venue = venueFromCaption(caption);
-          const neighborhood = neighborhoodFromCaption(caption);
+          const neighborhood = videoNeighborhoodFromText(caption, acct.city);
           const imageUrl = pickImageUrl(media);
           const title = titleFromCaption(caption, acct.handle);
+
+          const categories = isFoodTip
+            ? ["food"]
+            : isCityGuideTip
+              ? acct.categories.filter((c) => c !== "free")
+              : acct.categories;
 
           events.push({
             source: "instagram",
             sourceEventId: media.id,
-            kind: isFoodTip ? "recommendation" : "event",
+            kind: isTip ? "recommendation" : "event",
             title,
             description: caption.slice(0, 1500),
             startsAt,
-            city: "sf",
-            categories: isFoodTip ? ["food"] : acct.categories,
+            city: acct.city,
+            categories,
             tags: [
               "instagram",
               acct.handle,
               ...(isReel ? ["reel"] : []),
               ...(isVideo && !isReel ? ["video"] : []),
+              ...(isCityGuideTip ? ["city_guide"] : []),
+              ...(looksLikeOpening(caption) ? ["new_opening"] : []),
             ],
             url: media.permalink ?? `https://instagram.com/${acct.handle}`,
             imageUrl,
@@ -146,14 +212,31 @@ export const instagramAdapter: SourceAdapter = {
               handle: acct.handle,
               id: media.id,
               mediaType: media.media_type ?? null,
-              mediaUrl: media.media_url ?? null,
+              mediaUrl: playableUrl,
+              mediaRefreshedAt: new Date().toISOString(),
               published: media.timestamp ?? null,
               foodTip: isFoodTip,
+              cityGuide: isCityGuideTip,
             },
           });
+          emitted += 1;
         }
+
+        await recordIgCreatorScrape({
+          handle: acct.handle,
+          ok: true,
+          httpStatus: res.status,
+          mediaFetched: mediaList.length,
+          eventsEmitted: emitted,
+          profilePictureUrl,
+        });
       } catch (err) {
         console.warn(`[instagram] ${acct.handle}`, (err as Error).message);
+        await recordIgCreatorScrape({
+          handle: acct.handle,
+          ok: false,
+          error: (err as Error).message,
+        });
       }
     }
 
@@ -161,11 +244,10 @@ export const instagramAdapter: SourceAdapter = {
   },
 };
 
-export function curatedIgHandles() {
-  return CURATED_ACCOUNTS;
+export function curatedIgHandles(): IgCreatorAccount[] {
+  return SEED_IG_CREATORS;
 }
 
-/** Reels and recent video first — where SF restaurant tips usually land. */
 function sortMediaForIngest(media: IgMedia[]): IgMedia[] {
   return [...media].sort((a, b) => {
     const score = (m: IgMedia) => {
@@ -179,9 +261,23 @@ function sortMediaForIngest(media: IgMedia[]): IgMedia[] {
   });
 }
 
+function playableVideoUrl(media: IgMedia): string | null {
+  const isVideo =
+    media.media_type === "REELS" ||
+    media.media_type === "VIDEO" ||
+    media.media_product_type === "REELS";
+  if (isVideo && media.media_url?.trim()) return media.media_url;
+  const child = media.children?.data?.find(
+    (c) =>
+      (c.media_type === "REELS" || c.media_type === "VIDEO") &&
+      c.media_url?.trim(),
+  );
+  return child?.media_url?.trim() || null;
+}
+
 function pickImageUrl(media: IgMedia): string | null {
   if (media.media_type === "REELS" || media.media_type === "VIDEO") {
-    return media.thumbnail_url ?? media.media_url ?? null;
+    return media.thumbnail_url ?? playableVideoUrl(media) ?? null;
   }
   return media.media_url ?? media.thumbnail_url ?? null;
 }
@@ -230,49 +326,26 @@ function venueFromCaption(caption: string): string | null {
   return null;
 }
 
-const NEIGHBORHOOD_RES: { re: RegExp; name: string }[] = [
-  { re: /\bmission\b/i, name: "Mission" },
-  { re: /\bsoma\b|south of market/i, name: "SoMa" },
-  { re: /\bnorth beach\b/i, name: "North Beach" },
-  { re: /\brichmond\b/i, name: "Richmond" },
-  { re: /\bsunset\b/i, name: "Sunset" },
-  { re: /\bhaight\b/i, name: "Haight" },
-  { re: /\bhayes valley\b/i, name: "Hayes Valley" },
-  { re: /\bmarina\b/i, name: "Marina" },
-  { re: /\bembarcadero\b|ferry building/i, name: "Embarcadero" },
-  { re: /\bchinatown\b/i, name: "Chinatown" },
-  { re: /\bjapantown\b/i, name: "Japantown" },
-  { re: /\bdogpatch\b/i, name: "Dogpatch" },
-  { re: /\bpotrero\b/i, name: "Potrero Hill" },
-  { re: /\bcastro\b/i, name: "Castro" },
-  { re: /\bnopa\b/i, name: "NoPa" },
-  { re: /\btenderloin\b/i, name: "Tenderloin" },
-  { re: /\bfidi\b|financial district\b/i, name: "Financial District" },
-  { re: /\boakland\b/i, name: "Oakland" },
-  { re: /\bberkeley\b/i, name: "Berkeley" },
-];
-
-function neighborhoodFromCaption(caption: string): string | null {
-  for (const { re, name } of NEIGHBORHOOD_RES) {
-    if (re.test(caption)) return name;
-  }
-  return null;
-}
-
-function mentionsSfArea(caption: string): boolean {
-  return /\b(san francisco|#sf\b|#sfeats|#sffoodie|#bayareafood|#bayareaeats|#onlyinsf|#sanfrancisco|sf bay|bay area|📍.*\b(sf|san francisco)\b)/i.test(
-    caption,
-  ) || NEIGHBORHOOD_RES.some(({ re }) => re.test(caption));
-}
-
 function looksLikeFoodTip(caption: string): boolean {
-  return /\b(must try|must order|best|new spot|just opened|where to eat|restaurant|brunch|dinner|lunch|tacos|pizza|sushi|ramen|boba|coffee|bakery|dish|menu|popup|pop-up|foodie|eats|📍|#sfeats|#sffoodie|#bayareafood|#eeeeeats)\b/i.test(
+  return /\b(must try|must order|best|new spot|just opened|where to eat|restaurant|brunch|dinner|lunch|tacos|pizza|sushi|ramen|boba|coffee|bakery|dish|menu|popup|pop-up|foodie|eats|📍|#sfeats|#sffoodie|#bayareafood|#eeeeeats|#chicagoeats|#lafood)\b/i.test(
+    caption,
+  );
+}
+
+function looksLikeOpening(caption: string): boolean {
+  return /\b(just opened|now open|grand opening|soft open|new restaurant|new spot|opening soon|opening day|first look|sneak peek|newly opened|soft launch)\b/i.test(
+    caption,
+  );
+}
+
+function looksLikeCityGuide(caption: string): boolean {
+  return /\b(things to do|weekend guide|this week|weekly|date ideas|best spots|hidden gem|must visit|itinerary|roundup|guide to|what to do|weekend plans|events this week|happening this week)\b/i.test(
     caption,
   );
 }
 
 function looksLikeEvent(caption: string): boolean {
-  return /\b(tonight|this weekend|saturday|friday|doors|tickets|rsvp|show|opening night|live music|party|festival|popup shop)\b/i.test(
+  return /\b(tonight|this weekend|saturday|friday|doors|tickets|rsvp|show|opening night|live music|party|festival|popup shop|block party|market|concert|comedy show)\b/i.test(
     caption,
   );
 }

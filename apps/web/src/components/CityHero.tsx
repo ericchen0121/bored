@@ -60,7 +60,7 @@ export function CityHero({ city, area, status, children }: Props) {
             {status}
           </div>
           <p className="city-hero__lede">{lede}</p>
-          {children}
+          <div className="city-hero__tastes-slot">{children}</div>
         </div>
       </div>
     </header>

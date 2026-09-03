@@ -52,7 +52,18 @@ Movie vertical:
 
 ### `signals`
 
-User interactions: `saved` | `dismissed` | `going` | `opened` against event/film/showtime targets.
+User interactions: `saved` | `dismissed` | `going` | `opened` | `impressed` against event/film/showtime targets.
+
+Unique on `(userId, targetKind, targetId, type)` — one row per user×target×type (re-impress/open refreshes `createdAt`).
+
+| Type | Typical use |
+|---|---|
+| `saved` / `going` | Saves list + rank boost |
+| `dismissed` | Hard exclude from feed |
+| `impressed` | Reel cover seen / scrolled past — soft-hide carousel 7d |
+| `opened` | Reel detail opened — soft-hide carousel 21d |
+
+`impressed` / `opened` rows older than 21 days are pruned on ingest GC. See [Ranking → Reels & shorts](./ranking.md#reels--shorts-carousel).
 
 ### `ingest_runs`
 

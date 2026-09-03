@@ -107,6 +107,10 @@ export type Rankable = {
   recommendationLabel?: string | null;
   sourceTrust?: number;
   city?: string | null;
+  mediaUrl?: string | null;
+  mediaType?: string | null;
+  /** IG/YouTube publish time when known. */
+  publishedAt?: Date | null;
   isSponsored?: boolean;
   boostWeight?: number;
   sponsorEndsAt?: Date | string | null;
@@ -135,6 +139,9 @@ function isRecommendationTip(item: Rankable): boolean {
   if (item.recommendationLabel) return true;
   if (item.source && CURATED_TIP_SOURCES.has(item.source)) return true;
   if (item.source === "instagram" && item.categories.includes("food")) {
+    return true;
+  }
+  if (item.source === "youtube" && item.categories.includes("food")) {
     return true;
   }
   return false;
@@ -213,6 +220,9 @@ function toCard(s: {
   recommendationLabel?: string | null;
   isSponsored?: boolean;
   boostWeight?: number;
+  mediaUrl?: string | null;
+  mediaType?: string | null;
+  publishedAt?: Date | null;
 }): FeedCard {
   return {
     kind: s.kind,
@@ -248,6 +258,9 @@ function toCard(s: {
     recommendationLabel: s.recommendationLabel ?? null,
     isSponsored: s.isSponsored || undefined,
     boostWeight: s.boostWeight,
+    mediaUrl: s.mediaUrl ?? null,
+    mediaType: s.mediaType ?? null,
+    publishedAt: s.publishedAt ? s.publishedAt.toISOString() : null,
   };
 }
 

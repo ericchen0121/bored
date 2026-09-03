@@ -48,12 +48,18 @@ import {
   foodDealRecommendationLabel,
   activityRecommendationLabel,
   isFoodDealSource,
+  resolveFoodDealImageUrl,
   isActivityRecommendationSource,
+  isTheaterRecommendationSource,
+  theaterRecommendationLabel,
   stripInfatuationRatingTitle,
   FOUND_NON_FOOD_SECTIONS,
   resolveEventCoords,
   extractFoundSectionHint,
   igFoodRecommendationLabel,
+  ytVideoRecommendationLabel,
+  feedVideoPosterUrl,
+  youtubeThumbnailUrl,
   isFoodRecommendationSource,
   isNewRestaurantRecommendationSource,
   matchesSourceFilter,
@@ -66,7 +72,24 @@ import {
   resolveEventOutboundUrl,
   injectSponsoredIntoFeed,
   isSponsoredActive,
+  isFeedVideo,
+  isFeedVideoRankable,
+  isVideoContentLocalToMetro,
+  videoLocalityText,
+  videoMetroFromFeedArea,
+  FEED_VIDEO_CAROUSEL_LIMIT,
+  FEED_VIDEO_CACHE_POOL_LIMIT,
+  FEED_VIDEO_FETCH_LIMIT,
+  FEED_CURATED_FETCH_LIMIT,
+  VIDEO_IMPRESS_TTL_MS,
+  VIDEO_OPENED_TTL_MS,
+  rankVideoCarousel,
+  personalizeVideoCarouselCards,
+  isFeedVideoCard,
+  feedTopicsFullyCoveredByAll,
+  feedTopicsNeedServerEnrich,
   type EventOutboundSlot,
+  type FeedCard,
   type Rankable,
   upgradeFuncheapImageUrl,
   type UserPrefs,
@@ -74,10 +97,13 @@ import {
 
 import { coalesceEventOccurrences } from "@bored/shared/coalesce";
 import { config } from "dotenv";
-import { and, asc, eq, gt, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
+import type { IncomingMessage } from "node:http";
 import { adminApp } from "./admin.js";
 import {
   requestMagicLink,
@@ -93,6 +119,7 @@ import {
   todayFeedCacheKey,
 } from "./feedCache.js";
 import { resolveGeo } from "./geo.js";
+import { resolveIgAccessToken } from "@bored/ingest/meta";
 
 config({ path: resolve(process.cwd(), "../../.env") });
 config();
@@ -119,7 +146,14 @@ app.use(
       if (LOCAL_DEV_ORIGIN.test(origin)) return origin;
       return process.env.WEB_ORIGIN ?? "http://localhost:3000";
     },
-    allowHeaders: ["Content-Type", "X-User-Id", "Authorization", "X-Admin-Token"],
+    allowHeaders: [
+      "Content-Type",
+      "X-User-Id",
+      "Authorization",
+      "X-Admin-Token",
+      "Range",
+    ],
+    exposeHeaders: ["Content-Range", "Accept-Ranges", "Content-Length"],
   }),
 );
 
@@ -158,6 +192,7 @@ function presentEvent<
   T extends {
     source: string;
     title: string;
+    description?: string | null;
     imageUrl?: string | null;
     rawPayload?: unknown;
     lat?: number | null;
@@ -168,10 +203,32 @@ function presentEvent<
     neighborhood?: string | null;
   },
 >(row: T): T {
+  const payload =
+    (row.rawPayload as Record<string, unknown> | null | undefined) ?? null;
   const withImage =
     row.source === "funcheap" && row.imageUrl
       ? { ...row, imageUrl: upgradeFuncheapImageUrl(row.imageUrl) }
-      : row;
+      : row.source === "food_deals"
+        ? {
+            ...row,
+            imageUrl: resolveFoodDealImageUrl({
+              imageUrl: row.imageUrl,
+              dealId:
+                typeof payload?.dealId === "string" ? payload.dealId : null,
+              title: row.title,
+              dealSummary: [
+                typeof payload?.dealSummary === "string"
+                  ? payload.dealSummary
+                  : "",
+                row.description ?? "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+              dealKind:
+                typeof payload?.dealKind === "string" ? payload.dealKind : null,
+            }),
+          }
+        : row;
   const coords = resolveEventCoords({
     lat: withImage.lat,
     lng: withImage.lng,
@@ -186,8 +243,10 @@ function presentEvent<
       ? { ...withImage, lat: coords.lat, lng: coords.lng }
       : withImage;
   if (withGeo.source !== "food") return withGeo;
-  const payload = (withGeo.rawPayload as Record<string, unknown> | null) ?? {};
-  const rating = typeof payload.rating === "number" ? payload.rating : null;
+  const foodPayload =
+    (withGeo.rawPayload as Record<string, unknown> | null) ?? {};
+  const rating =
+    typeof foodPayload.rating === "number" ? foodPayload.rating : null;
   return {
     ...withGeo,
     title: stripInfatuationRatingTitle(withGeo.title, rating),
@@ -442,8 +501,39 @@ app.put("/v1/me/interests", async (c) => {
 
 app.post("/v1/me/signals", async (c) => {
   const uid = await userId(c);
-  const body = SignalInputSchema.parse(await c.req.json());
+  let body: ReturnType<typeof SignalInputSchema.parse>;
+  try {
+    body = SignalInputSchema.parse(await c.req.json());
+  } catch {
+    return c.json({ error: "Invalid signal payload" }, 400);
+  }
   await db.insert(users).values({ id: uid }).onConflictDoNothing();
+
+  // impressed / opened: refresh createdAt so TTL soft-hides restart on re-see.
+  const refreshTtl = body.type === "impressed" || body.type === "opened";
+  if (refreshTtl) {
+    const [row] = await db
+      .insert(signals)
+      .values({
+        userId: uid,
+        targetKind: body.targetKind,
+        targetId: body.targetId,
+        type: body.type,
+        createdAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [
+          signals.userId,
+          signals.targetKind,
+          signals.targetId,
+          signals.type,
+        ],
+        set: { createdAt: new Date() },
+      })
+      .returning();
+    return c.json(row ?? { ok: true });
+  }
+
   const [row] = await db
     .insert(signals)
     .values({
@@ -473,7 +563,12 @@ app.post("/v1/me/signals", async (c) => {
 
 app.delete("/v1/me/signals", async (c) => {
   const uid = await userId(c);
-  const body = SignalInputSchema.parse(await c.req.json());
+  let body: ReturnType<typeof SignalInputSchema.parse>;
+  try {
+    body = SignalInputSchema.parse(await c.req.json());
+  } catch {
+    return c.json({ error: "Invalid signal payload" }, 400);
+  }
   await db
     .delete(signals)
     .where(
@@ -811,6 +906,763 @@ app.get("/v1/events/:id", async (c) => {
   return c.json(presentEvent(row));
 });
 
+const IG_MEDIA_FRESH_MS = 45 * 60 * 1000;
+const IG_CDN_FETCH_TIMEOUT_MS = 20_000;
+const IG_CDN_POSTER_TIMEOUT_MS = 12_000;
+const IG_POSTER_MAX_BYTES = 6 * 1024 * 1024;
+const IG_POSTER_CACHE_MS = 10 * 60 * 1000;
+const IG_POSTER_CACHE_MAX = 160;
+/** Graph business_discovery can be slow under concurrent refresh stampedes. */
+const IG_GRAPH_FETCH_TIMEOUT_MS = 20_000;
+/** Reuse discovery payloads across sibling reels from the same handle. */
+const IG_DISCOVERY_CACHE_MS = 60_000;
+
+const igHttpsAgent = new HttpsAgent({
+  keepAlive: false,
+  maxSockets: 64,
+});
+
+const igPosterCache = new Map<
+  string,
+  { body: Buffer; contentType: string; cachedAt: number }
+>();
+
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" || /aborted/i.test(err.message))
+  );
+}
+
+function isIgCdnUrl(url: string | null | undefined): boolean {
+  return Boolean(url && /cdninstagram\.com|fbcdn\.net/i.test(url));
+}
+
+function likelyIgVideoUrl(url: string): boolean {
+  return /\.mp4(\?|$)/i.test(url) || /\/o1\/v\//i.test(url);
+}
+
+function looksLikeImageBytes(
+  buf: Buffer,
+  contentType: string | null,
+): boolean {
+  if (buf.length < 12) return false;
+  if (buf[0] === 0xff && buf[1] === 0xd8) return true;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e) return true;
+  if (
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return true;
+  }
+  if (buf.subarray(4, 8).toString("ascii") === "ftyp") return false;
+  return Boolean(contentType && /^image\//i.test(contentType));
+}
+
+async function readHttpBody(
+  res: IncomingMessage,
+  maxBytes: number,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let n = 0;
+  for await (const chunk of res) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    n += buf.length;
+    if (n > maxBytes) {
+      res.destroy();
+      throw new Error("too large");
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
+
+function igCdnRequestHeaders(range?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    Referer: "https://www.instagram.com/",
+    Connection: "close",
+  };
+  if (range) {
+    headers.Range = range;
+    headers.Accept = "*/*";
+  }
+  return headers;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = IG_GRAPH_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Instagram CDN via node:https — undici fetch + keep-alive H1 asserts
+ * (`Parser.finish`) when Meta closes or resets the socket, which takes down
+ * the whole API process.
+ */
+function fetchInstagramCdn(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  redirectsLeft = 4,
+): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("This operation was aborted"));
+      return;
+    }
+
+    let settled = false;
+    const req = httpsRequest(
+      url,
+      { method: "GET", headers, agent: igHttpsAgent },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (
+          redirectsLeft > 0 &&
+          [301, 302, 303, 307, 308].includes(status)
+        ) {
+          const loc = nodeHeader(res.headers.location);
+          res.resume();
+          if (!loc) {
+            if (!settled) {
+              settled = true;
+              reject(new Error(`redirect ${status} without location`));
+            }
+            return;
+          }
+          try {
+            const next = new URL(loc, url).href;
+            if (!isIgCdnUrl(next) && !/^https:\/\/www\.instagram\.com\//i.test(next)) {
+              if (!settled) {
+                settled = true;
+                reject(new Error("redirect off CDN"));
+              }
+              return;
+            }
+            settled = true;
+            fetchInstagramCdn(
+              next,
+              headers,
+              timeoutMs,
+              signal,
+              redirectsLeft - 1,
+            ).then(resolve, reject);
+          } catch (err) {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          }
+          return;
+        }
+
+        if (settled) {
+          res.resume();
+          return;
+        }
+        settled = true;
+        signal?.addEventListener("abort", () => res.destroy(), { once: true });
+        res.on("error", () => {
+          /* client abort / reset — don't crash the process */
+        });
+        resolve(res);
+      },
+    );
+
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      const err = new Error("This operation was aborted");
+      err.name = "AbortError";
+      fail(err);
+    });
+    req.on("error", fail);
+
+    const onAbort = () => {
+      req.destroy();
+      const err = new Error("This operation was aborted");
+      err.name = "AbortError";
+      fail(err);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    req.end();
+  });
+}
+
+function nodeHeader(value: string | string[] | undefined): string | null {
+  if (value == null) return null;
+  return Array.isArray(value) ? value.join(", ") : value;
+}
+
+type IgDiscoveryMedia = {
+  id?: string;
+  permalink?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  media_type?: string;
+  children?: {
+    data?: {
+      media_type?: string;
+      media_url?: string;
+      thumbnail_url?: string;
+    }[];
+  };
+};
+
+type IgDiscoveryBundle = {
+  media: IgDiscoveryMedia[];
+  fetchedAt: number;
+};
+
+const igDiscoveryInflight = new Map<string, Promise<IgDiscoveryBundle | null>>();
+const igDiscoveryCache = new Map<string, IgDiscoveryBundle>();
+
+function igHandleKey(handle: string): string {
+  return handle.replace(/^@/, "").trim().toLowerCase();
+}
+
+function pickIgPlayableUrls(match: IgDiscoveryMedia | undefined): {
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+} {
+  if (!match) return { mediaUrl: null, thumbnailUrl: null };
+  const childVideo = match.children?.data?.find(
+    (c) =>
+      (c.media_type === "VIDEO" || c.media_type === "REELS") && c.media_url,
+  );
+  return {
+    mediaUrl: match.media_url ?? childVideo?.media_url ?? null,
+    thumbnailUrl: match.thumbnail_url ?? childVideo?.thumbnail_url ?? null,
+  };
+}
+
+/**
+ * One Graph business_discovery per handle (coalesced + short TTL cache).
+ * Feed stampedes otherwise fan out N identical heavy queries and hit AbortError.
+ */
+async function fetchIgBusinessDiscovery(
+  handle: string,
+): Promise<IgDiscoveryBundle | null> {
+  const key = igHandleKey(handle);
+  const cached = igDiscoveryCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < IG_DISCOVERY_CACHE_MS) {
+    return cached;
+  }
+
+  const inflight = igDiscoveryInflight.get(key);
+  if (inflight) return inflight;
+
+  const promise = (async (): Promise<IgDiscoveryBundle | null> => {
+    const token = await resolveIgAccessToken();
+    const userId = process.env.IG_BUSINESS_USER_ID?.trim();
+    if (!token || !userId) return null;
+
+    // One discovery per handle (inflight coalesced). Include children so
+    // CAROUSEL_ALBUM tips can resolve a child VIDEO media_url.
+    const fields = `business_discovery.username(${handle}){media.limit(50){id,permalink,media_url,thumbnail_url,media_type,children{media_type,media_url,thumbnail_url}}}`;
+    const url = `https://graph.facebook.com/v21.0/${encodeURIComponent(userId)}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(token)}`;
+
+    try {
+      const res = await fetchWithTimeout(url, undefined, IG_GRAPH_FETCH_TIMEOUT_MS);
+      if (!res.ok) {
+        console.warn(`[events/media] discovery @${handle} ${res.status}`);
+        return null;
+      }
+      const data = (await res.json()) as {
+        business_discovery?: { media?: { data?: IgDiscoveryMedia[] } };
+      };
+      const media = data.business_discovery?.media?.data ?? [];
+      const bundle: IgDiscoveryBundle = { media, fetchedAt: Date.now() };
+      igDiscoveryCache.set(key, bundle);
+      return bundle;
+    } catch (err) {
+      const aborted =
+        err instanceof Error &&
+        (err.name === "AbortError" || /aborted/i.test(err.message));
+      console.warn(
+        `[events/media] discovery refresh failed @${handle}${aborted ? " (timeout)" : ""}`,
+        aborted ? undefined : err,
+      );
+      return null;
+    } finally {
+      igDiscoveryInflight.delete(key);
+    }
+  })();
+
+  igDiscoveryInflight.set(key, promise);
+  return promise;
+}
+
+/** Persist fresh CDN URLs for every matching listing of this creator. */
+async function persistIgDiscoveryMedia(
+  handle: string,
+  media: IgDiscoveryMedia[],
+): Promise<void> {
+  const byId = new Map<string, IgDiscoveryMedia>();
+  for (const m of media) {
+    if (m.id) byId.set(m.id, m);
+  }
+  if (byId.size === 0) return;
+
+  const ids = [...byId.keys()];
+  const rows = await db
+    .select({
+      id: events.id,
+      imageUrl: events.imageUrl,
+      sourceEventId: events.sourceEventId,
+      rawPayload: events.rawPayload,
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.source, "instagram"),
+        inArray(events.sourceEventId, ids),
+      ),
+    );
+  if (rows.length === 0) return;
+
+  const refreshedAt = new Date().toISOString();
+  const handleNorm = igHandleKey(handle);
+  await Promise.all(
+    rows.map(async (row) => {
+      const payload =
+        (row.rawPayload as Record<string, unknown> | null | undefined) ?? {};
+      const payloadHandle =
+        typeof payload.handle === "string"
+          ? igHandleKey(payload.handle)
+          : "";
+      if (payloadHandle && payloadHandle !== handleNorm) return;
+
+      const match =
+        byId.get(row.sourceEventId) ??
+        (typeof payload.id === "string" ? byId.get(payload.id) : undefined);
+      const picked = pickIgPlayableUrls(match);
+      if (!picked.mediaUrl && !picked.thumbnailUrl) return;
+
+      const nextThumb = picked.thumbnailUrl ?? row.imageUrl;
+      await db
+        .update(events)
+        .set({
+          imageUrl: nextThumb,
+          rawPayload: {
+            ...payload,
+            mediaUrl: picked.mediaUrl ?? payload.mediaUrl ?? null,
+            thumbnailUrl: picked.thumbnailUrl ?? payload.thumbnailUrl ?? null,
+            mediaRefreshedAt: refreshedAt,
+          },
+        })
+        .where(eq(events.id, row.id));
+    }),
+  );
+}
+
+/**
+ * Resolve Instagram CDN URLs (server-side only).
+ * Browsers cannot load CDN media (CORP / NotSameOrigin) — proxy via
+ * `/v1/events/:id/media/stream` and `/media/poster` instead.
+ */
+async function resolveInstagramMediaUrl(
+  row: EventRow,
+  opts?: { refresh?: boolean },
+): Promise<{
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+}> {
+  const payload =
+    (row.rawPayload as Record<string, unknown> | null | undefined) ?? {};
+  const mediaId =
+    typeof payload.id === "string" && payload.id.trim()
+      ? payload.id.trim()
+      : row.sourceEventId;
+  const handle =
+    typeof payload.handle === "string" && payload.handle.trim()
+      ? payload.handle.replace(/^@/, "").trim()
+      : null;
+  let mediaUrl =
+    typeof payload.mediaUrl === "string" && payload.mediaUrl.trim()
+      ? payload.mediaUrl
+      : null;
+  let thumbnailUrl =
+    typeof row.imageUrl === "string" &&
+    /cdninstagram\.com|fbcdn\.net/i.test(row.imageUrl)
+      ? row.imageUrl
+      : typeof payload.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
+        ? payload.thumbnailUrl
+        : row.imageUrl;
+  const refreshedAtRaw =
+    typeof payload.mediaRefreshedAt === "string"
+      ? payload.mediaRefreshedAt
+      : null;
+  const refreshedAt = refreshedAtRaw ? Date.parse(refreshedAtRaw) : NaN;
+  const isFresh =
+    Number.isFinite(refreshedAt) &&
+    Date.now() - refreshedAt < IG_MEDIA_FRESH_MS;
+  // refresh:false = cache only (stream/poster hot path).
+  // refresh:true = always hit Graph. omit = refresh when missing/stale.
+  const shouldRefresh =
+    opts?.refresh === true ||
+    (opts?.refresh !== false && (!mediaUrl || !isFresh));
+
+  if (shouldRefresh && handle && mediaId) {
+    const bundle = await fetchIgBusinessDiscovery(handle);
+    if (bundle) {
+      const shortcode = (() => {
+        try {
+          return new URL(row.url ?? "").pathname
+            .split("/")
+            .filter(Boolean)[1];
+        } catch {
+          return null;
+        }
+      })();
+      const match = bundle.media.find(
+        (m) =>
+          m.id === mediaId ||
+          (shortcode && m.permalink?.includes(shortcode)),
+      );
+      const picked = pickIgPlayableUrls(match);
+      if (picked.mediaUrl) mediaUrl = picked.mediaUrl;
+      if (picked.thumbnailUrl) thumbnailUrl = picked.thumbnailUrl;
+
+      // Persist this listing + sibling reels from the same Graph payload.
+      try {
+        await persistIgDiscoveryMedia(handle, bundle.media);
+      } catch (err) {
+        console.warn("[events/media] persist discovery failed", err);
+      }
+    }
+  }
+
+  return { mediaUrl, thumbnailUrl };
+}
+
+async function proxyInstagramUpstream(
+  upstreamUrl: string,
+  opts?: {
+    range?: string;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  },
+): Promise<Response | null> {
+  // Instagram /media/?size=l HTML endpoints hang/405 — only proxy CDN URLs.
+  if (/instagram\.com\/.+\/media\/?/i.test(upstreamUrl)) return null;
+  if (!isIgCdnUrl(upstreamUrl)) return null;
+
+  const timeoutMs = opts?.timeoutMs ?? IG_CDN_FETCH_TIMEOUT_MS;
+  const upstreamHeaders = igCdnRequestHeaders(opts?.range);
+
+  let upstream: IncomingMessage;
+  try {
+    upstream = await fetchInstagramCdn(
+      upstreamUrl,
+      upstreamHeaders,
+      timeoutMs,
+      opts?.signal,
+    );
+  } catch (err) {
+    if (opts?.signal?.aborted) return null;
+    if (isAbortError(err)) {
+      console.warn(`[events/media] upstream timeout after ${timeoutMs}ms`);
+    } else {
+      console.warn("[events/media] upstream fetch failed", err);
+    }
+    return null;
+  }
+
+  const status = upstream.statusCode ?? 0;
+  if (status !== 200 && status !== 206) {
+    console.warn(`[events/media] upstream ${status}`);
+    upstream.resume();
+    return null;
+  }
+
+  const headers = new Headers();
+  headers.set(
+    "Content-Type",
+    nodeHeader(upstream.headers["content-type"]) ?? "application/octet-stream",
+  );
+  headers.set("Accept-Ranges", "bytes");
+  headers.set("Cache-Control", "private, max-age=300");
+  // Never leak Instagram CORP to the browser.
+  headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  const contentRange = nodeHeader(upstream.headers["content-range"]);
+  if (contentRange) headers.set("Content-Range", contentRange);
+  // Only advertise Content-Length for ranged replies. Piping a full CDN body
+  // often truncates when Meta resets the socket → ERR_CONTENT_LENGTH_MISMATCH.
+  if (status === 206) {
+    const contentLength = nodeHeader(upstream.headers["content-length"]);
+    if (contentLength) headers.set("Content-Length", contentLength);
+  }
+
+  return new Response(Readable.toWeb(upstream) as ReadableStream, {
+    status,
+    headers,
+  });
+}
+
+/** Buffer a complete image so Content-Length always matches the body. */
+async function fetchInstagramPosterBytes(
+  upstreamUrl: string,
+  signal?: AbortSignal,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  if (/instagram\.com\/.+\/media\/?/i.test(upstreamUrl)) return null;
+  if (!isIgCdnUrl(upstreamUrl)) return null;
+
+  let upstream: IncomingMessage;
+  try {
+    upstream = await fetchInstagramCdn(
+      upstreamUrl,
+      igCdnRequestHeaders(),
+      IG_CDN_POSTER_TIMEOUT_MS,
+      signal,
+    );
+  } catch (err) {
+    if (signal?.aborted) return null;
+    if (isAbortError(err)) {
+      console.warn(
+        `[events/media] poster timeout after ${IG_CDN_POSTER_TIMEOUT_MS}ms`,
+      );
+    } else {
+      console.warn("[events/media] poster fetch failed", err);
+    }
+    return null;
+  }
+
+  const status = upstream.statusCode ?? 0;
+  if (status !== 200) {
+    console.warn(`[events/media] poster ${status}`);
+    upstream.resume();
+    return null;
+  }
+
+  const declared = Number(nodeHeader(upstream.headers["content-length"]));
+  const upstreamType = nodeHeader(upstream.headers["content-type"]);
+  if (upstreamType && /^video\//i.test(upstreamType)) {
+    upstream.resume();
+    return null;
+  }
+
+  let body: Buffer;
+  try {
+    body = await readHttpBody(upstream, IG_POSTER_MAX_BYTES);
+  } catch {
+    return null;
+  }
+
+  if (Number.isFinite(declared) && declared > 0 && body.length < declared) {
+    return null;
+  }
+  if (!looksLikeImageBytes(body, upstreamType)) return null;
+
+  return {
+    body,
+    contentType:
+      upstreamType && /^image\//i.test(upstreamType)
+        ? upstreamType
+        : "image/jpeg",
+  };
+}
+
+function igPosterResponse(body: Buffer, contentType: string): Response {
+  const headers = new Headers();
+  headers.set("Content-Type", contentType);
+  headers.set("Content-Length", String(body.length));
+  headers.set("Cache-Control", "private, max-age=600");
+  headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  return new Response(body, { status: 200, headers });
+}
+
+function rememberIgPoster(
+  eventId: string,
+  body: Buffer,
+  contentType: string,
+): void {
+  if (igPosterCache.size >= IG_POSTER_CACHE_MAX) {
+    const oldest = igPosterCache.keys().next().value;
+    if (oldest) igPosterCache.delete(oldest);
+  }
+  igPosterCache.set(eventId, {
+    body,
+    contentType,
+    cachedAt: Date.now(),
+  });
+}
+
+function cachedIgPoster(eventId: string): Response | null {
+  const hit = igPosterCache.get(eventId);
+  if (!hit) return null;
+  if (Date.now() - hit.cachedAt > IG_POSTER_CACHE_MS) {
+    igPosterCache.delete(eventId);
+    return null;
+  }
+  return igPosterResponse(hit.body, hit.contentType);
+}
+
+/**
+ * Metadata for reel playback. Instagram `mediaUrl` is always our same-origin
+ * stream proxy — never the CDN URL (blocked by CORP in browsers).
+ */
+app.get("/v1/events/:id/media", async (c) => {
+  const [row] = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.id, c.req.param("id")), eq(events.hidden, false)))
+    .limit(1);
+  if (!row) return c.json({ error: "Not found" }, 404);
+
+  const payload =
+    (row.rawPayload as Record<string, unknown> | null | undefined) ?? {};
+
+  if (row.source === "youtube") {
+    const videoId =
+      typeof payload.videoId === "string"
+        ? payload.videoId
+        : row.sourceEventId;
+    return c.json({
+      kind: "youtube",
+      videoId,
+      mediaUrl: null,
+      thumbnailUrl: row.imageUrl,
+      permalink: row.url,
+    });
+  }
+
+  if (row.source !== "instagram") {
+    return c.json({
+      kind: "none",
+      mediaUrl: null,
+      thumbnailUrl: row.imageUrl,
+      permalink: row.url,
+    });
+  }
+
+  // Prefer cached CDN URL; only hit Graph when missing/stale.
+  const resolved = await resolveInstagramMediaUrl(row);
+  return c.json({
+    kind: "instagram",
+    /** API proxy paths — never return Instagram CDN URLs to browsers. */
+    mediaUrl: resolved.mediaUrl
+      ? `/v1/events/${row.id}/media/stream`
+      : null,
+    thumbnailUrl: resolved.thumbnailUrl
+      ? `/v1/events/${row.id}/media/poster`
+      : null,
+    permalink: row.url,
+  });
+});
+
+/**
+ * Proxy Instagram CDN video so browsers can play it (CDN sends
+ * Cross-Origin-Resource-Policy: same-origin which blocks direct <video>).
+ */
+app.get("/v1/events/:id/media/stream", async (c) => {
+  const [row] = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.id, c.req.param("id")), eq(events.hidden, false)))
+    .limit(1);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  if (row.source !== "instagram") {
+    return c.json({ error: "Not an Instagram listing" }, 400);
+  }
+
+  // Fast path: use stored mediaUrl; refresh only if missing or CDN 4xx.
+  let { mediaUrl } = await resolveInstagramMediaUrl(row, { refresh: false });
+  if (!mediaUrl) {
+    ({ mediaUrl } = await resolveInstagramMediaUrl(row, { refresh: true }));
+  }
+  if (!mediaUrl) return c.json({ error: "No media URL" }, 404);
+
+  const streamOpts = {
+    range: c.req.header("Range") ?? undefined,
+    timeoutMs: IG_CDN_FETCH_TIMEOUT_MS,
+    signal: c.req.raw.signal,
+  };
+  let proxied = await proxyInstagramUpstream(mediaUrl, streamOpts);
+  if (!proxied) {
+    ({ mediaUrl } = await resolveInstagramMediaUrl(row, { refresh: true }));
+    if (!mediaUrl) return c.json({ error: "Upstream media unavailable" }, 502);
+    proxied = await proxyInstagramUpstream(mediaUrl, streamOpts);
+  }
+  if (!proxied) return c.json({ error: "Upstream media unavailable" }, 502);
+  return proxied;
+});
+
+/**
+ * Proxy Instagram thumbnail/poster (CDN CORP blocks browser <img> hotlinks).
+ */
+app.get("/v1/events/:id/media/poster", async (c) => {
+  const eventId = c.req.param("id");
+  const [row] = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.id, eventId), eq(events.hidden, false)))
+    .limit(1);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  if (row.source !== "instagram") {
+    return c.json({ error: "Not an Instagram listing" }, 400);
+  }
+
+  const cached = cachedIgPoster(eventId);
+  if (cached) return cached;
+
+  let { thumbnailUrl } = await resolveInstagramMediaUrl(row, {
+    refresh: false,
+  });
+  const payload =
+    (row.rawPayload as Record<string, unknown> | null | undefined) ?? {};
+  const payloadThumb =
+    typeof payload.thumbnailUrl === "string" ? payload.thumbnailUrl : null;
+
+  const rawCandidates = [thumbnailUrl, payloadThumb, row.imageUrl].filter(
+    (u): u is string => isIgCdnUrl(u),
+  );
+  // Prefer stills; video CDN URLs are huge and not valid <img> covers.
+  const candidates = [
+    ...rawCandidates.filter((u) => !likelyIgVideoUrl(u)),
+    ...rawCandidates.filter((u) => likelyIgVideoUrl(u)),
+  ].filter((u, i, arr) => arr.indexOf(u) === i);
+
+  for (const url of candidates) {
+    const hit = await fetchInstagramPosterBytes(url, c.req.raw.signal);
+    if (!hit) continue;
+    rememberIgPoster(eventId, hit.body, hit.contentType);
+    return igPosterResponse(hit.body, hit.contentType);
+  }
+
+  // Last resort: Graph refresh then retry CDN thumb only.
+  ({ thumbnailUrl } = await resolveInstagramMediaUrl(row, { refresh: true }));
+  if (isIgCdnUrl(thumbnailUrl) && !likelyIgVideoUrl(thumbnailUrl!)) {
+    const hit = await fetchInstagramPosterBytes(
+      thumbnailUrl!,
+      c.req.raw.signal,
+    );
+    if (hit) {
+      rememberIgPoster(eventId, hit.body, hit.contentType);
+      return igPosterResponse(hit.body, hit.contentType);
+    }
+  }
+  return c.json({ error: "No poster" }, 404);
+});
+
 app.get("/v1/movies", async (c) => {
   const rows = await db.select().from(films).limit(100);
   return c.json({ films: rows });
@@ -887,7 +1739,7 @@ type TodayFeedCacheBody = {
     budgetTier: number | null;
     budgetMax: number | null;
   };
-  cards: { id: string; filmId?: string | null; [key: string]: unknown }[];
+  cards: FeedCard[];
 };
 
 async function dismissedIdsForUser(uid: string): Promise<Set<string>> {
@@ -902,6 +1754,40 @@ async function dismissedIdsForUser(uid: string): Promise<Set<string>> {
     if (s.targetKind === "film") ids.add(`film:${s.targetId}`);
   }
   return ids;
+}
+
+/** Recent reel covers the user impressed or opened (within soft-hide TTLs). */
+async function videoSeenIdsForUser(uid: string): Promise<{
+  impressedIds: Set<string>;
+  openedIds: Set<string>;
+}> {
+  const now = Date.now();
+  const impressCutoff = new Date(now - VIDEO_IMPRESS_TTL_MS);
+  const openedCutoff = new Date(now - VIDEO_OPENED_TTL_MS);
+  const rows = await db
+    .select()
+    .from(signals)
+    .where(
+      and(
+        eq(signals.userId, uid),
+        inArray(signals.type, ["impressed", "opened"]),
+        gte(signals.createdAt, openedCutoff),
+      ),
+    )
+    .limit(1000);
+
+  const impressedIds = new Set<string>();
+  const openedIds = new Set<string>();
+  for (const s of rows) {
+    if (s.type === "opened") {
+      openedIds.add(s.targetId);
+      continue;
+    }
+    if (s.type === "impressed" && s.createdAt >= impressCutoff) {
+      impressedIds.add(s.targetId);
+    }
+  }
+  return { impressedIds, openedIds };
 }
 
 function prefsSummaryFrom(prefs: UserPrefs) {
@@ -925,19 +1811,56 @@ function filterDismissedFeedCards<
   );
 }
 
-/** Shared Today payload + per-user prefsSummary / dismissals. */
+/**
+ * Shared Today payload + per-user prefs / dismissals / reel personalization.
+ * Video pool is larger in the cache; we trim to carousel limit here.
+ */
 async function overlayTodayFeedForUser(
   body: TodayFeedCacheBody,
   uid: string,
+  opts?: { videos?: "include" | "exclude" | "only" },
 ): Promise<TodayFeedCacheBody> {
-  const [prefs, dismissedIds] = await Promise.all([
+  const videosMode = opts?.videos ?? "include";
+  const needsVideoPersonalization = videosMode !== "exclude";
+
+  const [prefs, dismissedIds, videoSeen] = await Promise.all([
     getPrefs(uid),
     dismissedIdsForUser(uid),
+    needsVideoPersonalization
+      ? videoSeenIdsForUser(uid)
+      : Promise.resolve({
+          impressedIds: new Set<string>(),
+          openedIds: new Set<string>(),
+        }),
   ]);
+
+  const withoutDismissed = filterDismissedFeedCards(body.cards, dismissedIds);
+  if (videosMode === "exclude") {
+    return {
+      ...body,
+      prefsSummary: prefsSummaryFrom(prefs),
+      cards: withoutDismissed.filter((c) => !isFeedVideoCard(c)),
+    };
+  }
+
+  const videoPool: typeof withoutDismissed = [];
+  const rest: typeof withoutDismissed = [];
+  for (const card of withoutDismissed) {
+    if (isFeedVideoCard(card)) videoPool.push(card);
+    else rest.push(card);
+  }
+
+  const reelCards = personalizeVideoCarouselCards(videoPool, {
+    impressedIds: videoSeen.impressedIds,
+    openedIds: videoSeen.openedIds,
+    dismissedIds,
+    limit: FEED_VIDEO_CAROUSEL_LIMIT,
+  });
+
   return {
     ...body,
     prefsSummary: prefsSummaryFrom(prefs),
-    cards: filterDismissedFeedCards(body.cards, dismissedIds),
+    cards: videosMode === "only" ? reelCards : [...reelCards, ...rest],
   };
 }
 
@@ -966,7 +1889,9 @@ app.get("/v1/feed", async (c) => {
       hasSourcesQuery
         ? 200
         : 40),
+    videos: c.req.query("videos") ?? undefined,
   });
+  const videosMode = query.videos;
 
   // Shared Today feeds are cacheable for everyone (auth + anon). Dismissals /
   // prefsSummary are overlaid per request so the cached payload stays shared.
@@ -978,6 +1903,7 @@ app.get("/v1/feed", async (c) => {
           topics: query.topics ?? "",
           sources: query.sources ?? "",
           limit: query.limit,
+          videos: videosMode,
         })
       : null;
   if (todayCacheKey) {
@@ -985,8 +1911,50 @@ app.get("/v1/feed", async (c) => {
     if (cached) {
       c.header("X-Feed-Cache", "hit");
       return c.json(
-        await overlayTodayFeedForUser(cached as TodayFeedCacheBody, uid),
+        await overlayTodayFeedForUser(cached as TodayFeedCacheBody, uid, {
+          videos: videosMode,
+        }),
       );
+    }
+
+    // Dense calendar topics: derive from warm All cache (no curated extras).
+    const topicFilterEarly = parseFeedTopics(query.topics);
+    if (
+      topicFilterEarly.length > 0 &&
+      !query.sources?.trim() &&
+      feedTopicsFullyCoveredByAll(topicFilterEarly) &&
+      !feedTopicsNeedServerEnrich(topicFilterEarly)
+    ) {
+      const allKey = todayFeedCacheKey({
+        area: query.area,
+        date: query.date ?? null,
+        topics: "",
+        sources: "",
+        limit: query.limit,
+        videos: videosMode,
+      });
+      const allCached = getTodayFeedCache(allKey) as TodayFeedCacheBody | null;
+      if (allCached?.cards?.length) {
+        const derived: TodayFeedCacheBody = {
+          ...allCached,
+          cards: allCached.cards.filter((card) =>
+            matchesAnyFeedTopic(topicFilterEarly, {
+              kind: card.kind,
+              categories: card.categories ?? [],
+              tags: card.tags,
+              isFree: card.isFree,
+              source: card.source,
+              title: card.title,
+              venueName: card.venueName,
+            }),
+          ),
+        };
+        setTodayFeedCache(todayCacheKey, derived);
+        c.header("X-Feed-Cache", "derived");
+        return c.json(
+          await overlayTodayFeedForUser(derived, uid, { videos: videosMode }),
+        );
+      }
     }
   }
 
@@ -1042,6 +2010,8 @@ app.get("/v1/feed", async (c) => {
     windowEnd = new Date(
       now.getTime() + (browsingSources ? 90 : 30) * 86400000,
     );
+  } else if (topicFilter.includes("music_festivals")) {
+    windowEnd = new Date(now.getTime() + 120 * 86400000);
   } else {
     windowEnd = new Date(now.getTime() + 14 * 86400000);
   }
@@ -1074,70 +2044,153 @@ app.get("/v1/feed", async (c) => {
     }
     if (sourceFilter.has("food")) {
       curatedSourceSet.add("instagram");
+      curatedSourceSet.add("youtube");
+    }
+    if (sourceFilter.has("instagram")) {
+      curatedSourceSet.add("instagram");
+    }
+    if (sourceFilter.has("youtube")) {
+      curatedSourceSet.add("youtube");
     }
   }
-  if (topicFilter.includes("activities")) {
+  // Default / topic feeds: IG+YT are carousel inventory, not unbounded curated
+  // dumps into the event timeline. Progressive `videos=exclude` skips them.
+  if (!sourceFilter && topicFilter.length === 0 && videosMode !== "exclude") {
+    curatedSourceSet.add("instagram");
+    curatedSourceSet.add("youtube");
+  }
+  if (topicFilter.includes("activities") && videosMode !== "only") {
     curatedSourceSet.add("activities");
   }
   if (topicFilter.includes("food") || topicFilter.includes("happy_hours")) {
-    curatedSourceSet.add("food");
-    curatedSourceSet.add("food_deals");
-    curatedSourceSet.add("new_restaurants");
+    if (videosMode !== "only") {
+      curatedSourceSet.add("food");
+      curatedSourceSet.add("food_deals");
+      curatedSourceSet.add("new_restaurants");
+    }
+    if (videosMode !== "exclude") {
+      curatedSourceSet.add("instagram");
+      curatedSourceSet.add("youtube");
+    }
   }
-  if (topicFilter.includes("comedy")) {
+  if (topicFilter.includes("comedy") && videosMode !== "only") {
     curatedSourceSet.add("recurring");
   }
-  const curatedInFilter = [...curatedSourceSet];
+  if (topicFilter.includes("music_festivals") && videosMode !== "only") {
+    curatedSourceSet.add("music_festival");
+  }
+
+  const videoCuratedSources = [...curatedSourceSet].filter(
+    (s) => s === "instagram" || s === "youtube",
+  );
+  const otherCuratedSources = [...curatedSourceSet].filter(
+    (s) => s !== "instagram" && s !== "youtube",
+  );
+  // When browsing IG/YT explicitly, keep IMAGE/CAROUSEL tips; otherwise only
+  // pull short-form video rows for the carousel (avoids 700+ row scans).
+  const browsingVideoSource =
+    Boolean(sourceFilter?.has("instagram") || sourceFilter?.has("youtube"));
+  const videoRowsVideoOnly = !browsingVideoSource;
 
   const activitiesTopicOnly =
     !sourceFilter &&
     topicFilter.length === 1 &&
     topicFilter[0] === "activities";
+  // Happy hours inventory is curated food_deals only — timed scan is wasted.
+  const happyHoursTopicOnly =
+    !sourceFilter &&
+    topicFilter.length === 1 &&
+    topicFilter[0] === "happy_hours";
 
   const needsTimedQuery =
+    videosMode !== "only" &&
     !activitiesTopicOnly &&
+    !happyHoursTopicOnly &&
     (!sourceFilter ||
       [...sourceFilter].some(
         (s) => !(CURATED_FEED_SOURCES as readonly string[]).includes(s),
       ));
 
-  let eventRows: EventRow[] = [];
-  if (needsTimedQuery) {
-    const timedSources = sourceFilter
-      ? [...sourceFilter].filter(
-          (s) => !(CURATED_FEED_SOURCES as readonly string[]).includes(s),
-        )
-      : null;
-    eventRows = await db
-      .select()
-      .from(events)
-      .where(
-        and(
-          timedInWindow,
-          eq(events.hidden, false),
-          notInArray(events.source, [...CURATED_ONLY_TIMED_SOURCES]),
-          // Evergreen tips use kind=recommendation (also excluded by source).
-          sql`${events.kind} <> 'recommendation'`,
-          // Push source chip into SQL so denser calendars don't crowd out
-          // Partiful / newsletter / etc. inside the fetch limit.
-          timedSources?.length
-            ? inArray(events.source, timedSources)
-            : undefined,
-        ),
-      )
-      .orderBy(asc(events.startsAt))
-      .limit(fetchLimit);
-  }
+  /** Short-form video media — matches isFeedVideo / isInstagramVideo heuristics. */
+  const videoMediaSql = sql`(
+    ${events.source} = 'youtube'
+    OR upper(coalesce(${events.rawPayload}->>'mediaType', '')) IN ('VIDEO', 'REELS')
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(coalesce(${events.tags}, '[]'::jsonb)) AS t(tag)
+      WHERE lower(t.tag) IN ('reel', 'video', 'short', 'shorts')
+    )
+  )`;
 
-  if (curatedInFilter.length) {
+  const timedSources = sourceFilter
+    ? [...sourceFilter].filter(
+        (s) => !(CURATED_FEED_SOURCES as readonly string[]).includes(s),
+      )
+    : null;
+
+  const [timedRows, otherCuratedRaw, videoCuratedRaw, demotionRows] =
+    await Promise.all([
+    needsTimedQuery
+      ? db
+          .select()
+          .from(events)
+          .where(
+            and(
+              timedInWindow,
+              eq(events.hidden, false),
+              notInArray(events.source, [...CURATED_ONLY_TIMED_SOURCES]),
+              // Evergreen tips use kind=recommendation (also excluded by source).
+              sql`${events.kind} <> 'recommendation'`,
+              // Default Today: IG/YT come from the capped video query — don't let
+              // hundreds of IMAGE/CAROUSEL posts crowd the timed event limit.
+              !browsingVideoSource
+                ? notInArray(events.source, ["instagram", "youtube"])
+                : undefined,
+              timedSources?.length
+                ? inArray(events.source, timedSources)
+                : undefined,
+            ),
+          )
+          .orderBy(asc(events.startsAt))
+          .limit(fetchLimit)
+      : Promise.resolve([] as EventRow[]),
+    otherCuratedSources.length && videosMode !== "only"
+      ? db
+          .select()
+          .from(events)
+          .where(
+            and(
+              inArray(events.source, otherCuratedSources),
+              eq(events.hidden, false),
+            ),
+          )
+          .orderBy(desc(events.lastSeenAt))
+          .limit(FEED_CURATED_FETCH_LIMIT)
+      : Promise.resolve([] as EventRow[]),
+    videoCuratedSources.length && videosMode !== "exclude"
+      ? db
+          .select()
+          .from(events)
+          .where(
+            and(
+              inArray(events.source, videoCuratedSources),
+              eq(events.hidden, false),
+              videoRowsVideoOnly ? videoMediaSql : undefined,
+            ),
+          )
+          .orderBy(desc(events.lastSeenAt))
+          .limit(FEED_VIDEO_FETCH_LIMIT)
+      : Promise.resolve([] as EventRow[]),
+    db
+      .select()
+      .from(feedDemotionRules)
+      .where(eq(feedDemotionRules.active, true)),
+  ]);
+
+  let eventRows: EventRow[] = timedRows;
+  if (otherCuratedRaw.length || videoCuratedRaw.length) {
     const curatedRows = filterCuratedFeedRows(
-      await db
-        .select()
-        .from(events)
-        .where(
-          and(inArray(events.source, curatedInFilter), eq(events.hidden, false)),
-        )
-        .orderBy(asc(events.title)),
+      [...otherCuratedRaw, ...videoCuratedRaw],
       query.area,
       { now },
     );
@@ -1198,6 +2251,48 @@ app.get("/v1/feed", async (c) => {
       ) {
         return false;
       }
+      if (e.source === "instagram" || e.source === "youtube") {
+        const payload =
+          (e.rawPayload as Record<string, unknown> | null | undefined) ??
+          null;
+        const handle =
+          typeof payload?.handle === "string"
+            ? payload.handle
+            : typeof payload?.channelHandle === "string"
+              ? payload.channelHandle
+              : e.organizer;
+        const metro = videoMetroFromFeedArea(query.area);
+        const blob = videoLocalityText([
+          e.title,
+          e.description,
+          e.venueName,
+          e.neighborhood,
+          e.organizer,
+          Array.isArray(e.tags) ? e.tags.join(" ") : null,
+          typeof payload?.handle === "string" ? payload.handle : null,
+        ]);
+        if (
+          !isVideoContentLocalToMetro({
+            text: blob,
+            metro,
+            handle,
+          })
+        ) {
+          return false;
+        }
+        const isVideo = isFeedVideo({
+          source: e.source,
+          tags: e.tags as string[] | null,
+          rawPayload: payload,
+        });
+        if (
+          e.source === "instagram" &&
+          isVideo &&
+          !(typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim())
+        ) {
+          return false;
+        }
+      }
       if (e.source === "food") {
         const payload =
           (e.rawPayload as Record<string, unknown> | null | undefined) ?? null;
@@ -1254,6 +2349,7 @@ app.get("/v1/feed", async (c) => {
       );
       const isNewRestaurant = isNewRestaurantRecommendationSource(e.source);
       const isActivity = isActivityRecommendationSource(e.source);
+      const isTheater = isTheaterRecommendationSource(e.source);
       const isFoodDeal = isFoodDealSource(e.source);
       const infatuationRating =
         (e.source === "food" || isFoodDeal || isNewRestaurant) &&
@@ -1288,6 +2384,8 @@ app.get("/v1/feed", async (c) => {
           ? newRestaurantRecommendationLabel({ rawPayload: payload })
           : isActivity
             ? activityRecommendationLabel({ rawPayload: payload })
+            : isTheater
+              ? theaterRecommendationLabel({ rawPayload: payload })
             : isFood
               ? e.source === "instagram"
                 ? igFoodRecommendationLabel(
@@ -1301,11 +2399,39 @@ app.get("/v1/feed", async (c) => {
                       ? payload.mediaType
                       : null,
                   )
+                : e.source === "youtube"
+                  ? ytVideoRecommendationLabel(
+                      typeof payload?.channelTitle === "string"
+                        ? payload.channelTitle
+                        : "YouTube",
+                      payload?.isShort === true ||
+                        payload?.mediaType === "SHORT",
+                    )
                 : foodRecommendationLabel({
                     tags,
                     rawPayload: payload,
                     description: e.description,
                   })
+              : e.source === "instagram"
+                ? igFoodRecommendationLabel(
+                    typeof payload?.handle === "string"
+                      ? payload.handle
+                      : (tags.find(
+                          (t) =>
+                            !["instagram", "reel", "video", "food", "city_guide", "new_opening"].includes(t),
+                        ) ?? "instagram"),
+                    typeof payload?.mediaType === "string"
+                      ? payload.mediaType
+                      : null,
+                  )
+                : e.source === "youtube"
+                  ? ytVideoRecommendationLabel(
+                      typeof payload?.channelTitle === "string"
+                        ? payload.channelTitle
+                        : "YouTube",
+                      payload?.isShort === true ||
+                        payload?.mediaType === "SHORT",
+                    )
               : null;
 
       const coords = resolveEventCoords({
@@ -1337,17 +2463,55 @@ app.get("/v1/feed", async (c) => {
         priceMax: e.priceMax,
         neighborhood: e.neighborhood,
         venueName: e.venueName,
-        imageUrl:
-          e.source === "funcheap"
-            ? upgradeFuncheapImageUrl(e.imageUrl)
-            : e.imageUrl,
+        imageUrl: (() => {
+          if (e.source === "funcheap") {
+            return upgradeFuncheapImageUrl(e.imageUrl);
+          }
+          if (e.source === "youtube") {
+            const videoId =
+              typeof payload?.videoId === "string"
+                ? payload.videoId
+                : null;
+            return youtubeThumbnailUrl(videoId) ?? e.imageUrl;
+          }
+          if (e.source === "instagram") {
+            return feedVideoPosterUrl({
+              source: e.source,
+              imageUrl: e.imageUrl,
+              url: e.url,
+            });
+          }
+          if (isFoodDeal) {
+            return resolveFoodDealImageUrl({
+              imageUrl: e.imageUrl,
+              dealId:
+                typeof payload?.dealId === "string" ? payload.dealId : null,
+              title: e.title,
+              dealSummary: [
+                typeof payload?.dealSummary === "string"
+                  ? payload.dealSummary
+                  : "",
+                e.description ?? "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+              dealKind:
+                typeof payload?.dealKind === "string"
+                  ? payload.dealKind
+                  : null,
+            });
+          }
+          return e.imageUrl;
+        })(),
         url: e.url,
         subtitle: e.venueName,
         city: e.city,
         source: e.source,
         registrationStatus: e.registrationStatus as Rankable["registrationStatus"],
         sourceTrust:
-          e.source === "recurring"
+          e.source === "music_festival"
+            ? 0.95
+            : e.source === "recurring"
             ? 0.75
             : e.source === "partiful" && tags.includes("trending")
               ? 0.95
@@ -1360,6 +2524,26 @@ app.get("/v1/feed", async (c) => {
                   : 0.85,
         recommendationLabel,
         rawPayload: payload,
+        // Never send Instagram CDN URLs to the browser (CORP / NotSameOrigin).
+        mediaUrl:
+          e.source === "instagram"
+            ? null
+            : typeof payload?.mediaUrl === "string"
+              ? payload.mediaUrl
+              : null,
+        mediaType:
+          typeof payload?.mediaType === "string" ? payload.mediaType : null,
+        publishedAt: (() => {
+          const raw =
+            typeof payload?.published === "string"
+              ? payload.published
+              : typeof payload?.publishedAt === "string"
+                ? payload.publishedAt
+                : null;
+          if (!raw) return null;
+          const d = new Date(raw);
+          return Number.isNaN(d.getTime()) ? null : d;
+        })(),
         showtimesPreview: timesPreview?.times,
         showtimesMoreCount: timesPreview?.moreCount || undefined,
         ratings:
@@ -1375,12 +2559,16 @@ app.get("/v1/feed", async (c) => {
   // Group showtimes by film for movie cards.
   // Unfiltered feed includes TMS + indie; Indie theater chip includes only those showtimes.
   // Movies ingest is SF-scoped today — skip when browsing Chicago.
+  // Default Today/For you hide the Movies section unless the movies topic is on,
+  // so skip the showtimes join unless it can surface (topic / indie chip).
   const includeMovies =
+    videosMode !== "only" &&
     metroFromArea(query.area) === "sf" &&
     (!sourceFilter || sourceFilter.has("indie_theater")) &&
     (!categoryFilter ||
       categoryFilter.some((c) => c.startsWith("movies"))) &&
-    (!topicFilter.length || topicFilter.includes("movies"));
+    (topicFilter.includes("movies") ||
+      Boolean(sourceFilter?.has("indie_theater")));
 
   if (includeMovies) {
     const showsInWindow = exclusiveEnd
@@ -1474,16 +2662,23 @@ app.get("/v1/feed", async (c) => {
   }
 
   // Today is a shared chrono listing — keep rank input user-agnostic so the
-  // cache payload is identical for everyone. Dismissals overlay on the way out.
+  // cache payload is identical for everyone. Dismissals + reel impress/opened
+  // overlay on the way out (see overlayTodayFeedForUser).
   const sharedToday = query.mode === "today";
   let dismissedIds = new Set<string>();
   let savedBoostIds = new Set<string>();
+  let impressedIds = new Set<string>();
+  let openedIds = new Set<string>();
   if (!sharedToday) {
     const userSignals = await db
       .select()
       .from(signals)
       .where(eq(signals.userId, uid))
-      .limit(500);
+      .limit(1000);
+
+    const nowMs = now.getTime();
+    const impressCutoff = nowMs - VIDEO_IMPRESS_TTL_MS;
+    const openedCutoff = nowMs - VIDEO_OPENED_TTL_MS;
 
     dismissedIds = new Set(
       userSignals.filter((s) => s.type === "dismissed").map((s) => s.targetId),
@@ -1491,6 +2686,12 @@ app.get("/v1/feed", async (c) => {
     for (const s of userSignals) {
       if (s.type === "dismissed" && s.targetKind === "film") {
         dismissedIds.add(`film:${s.targetId}`);
+      }
+      if (s.type === "opened" && s.createdAt.getTime() >= openedCutoff) {
+        openedIds.add(s.targetId);
+      }
+      if (s.type === "impressed" && s.createdAt.getTime() >= impressCutoff) {
+        impressedIds.add(s.targetId);
       }
     }
     savedBoostIds = new Set(
@@ -1502,10 +2703,6 @@ app.get("/v1/feed", async (c) => {
     );
   }
 
-  const demotionRows = await db
-    .select()
-    .from(feedDemotionRules)
-    .where(eq(feedDemotionRules.active, true));
   const demotionRules = demotionRows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -1534,6 +2731,12 @@ app.get("/v1/feed", async (c) => {
   const organicRankables = rankables.filter((r) => !isSponsoredActive(r, now));
   const sponsoredRankables = rankables.filter((r) => isSponsoredActive(r, now));
 
+  const videoOrganic = organicRankables.filter(isFeedVideoRankable);
+  const restOrganic =
+    browsingVideoSource || videosMode === "only"
+      ? organicRankables
+      : organicRankables.filter((r) => !isFeedVideoRankable(r));
+
   const rankCtx = {
     prefs,
     now,
@@ -1543,28 +2746,39 @@ app.get("/v1/feed", async (c) => {
     demotionRules,
   };
 
-  const organicCards = topicForYou
-    ? rankForYouTopicFeed(
-        organicRankables,
-        { ...rankCtx, timeZone: locDefault.timezone },
-        query.limit,
-      )
-    : rankFeed(organicRankables, rankCtx, rankMode, query.limit);
-
-  const sponsoredCards = (
+  const rankRest = (items: Rankable[], limit: number) =>
     topicForYou
       ? rankForYouTopicFeed(
-          sponsoredRankables,
+          items,
           { ...rankCtx, timeZone: locDefault.timezone },
-          Math.max(8, Math.ceil(query.limit * 0.2)),
+          limit,
         )
-      : rankFeed(
+      : rankFeed(items, rankCtx, rankMode, limit);
+
+  const restCards =
+    videosMode === "only" ? [] : rankRest(restOrganic, query.limit);
+  // Today cache: larger unpersonalized pool; overlay personalizes to 40.
+  // Other modes: personalize immediately via impress/opened TTLs.
+  const reelCards =
+    videosMode === "exclude" || browsingVideoSource
+      ? []
+      : rankVideoCarousel(videoOrganic, {
+          now,
+          impressedIds: sharedToday ? undefined : impressedIds,
+          openedIds: sharedToday ? undefined : openedIds,
+          dismissedIds: sharedToday ? undefined : dismissedIds,
+          limit: sharedToday
+            ? FEED_VIDEO_CACHE_POOL_LIMIT
+            : FEED_VIDEO_CAROUSEL_LIMIT,
+        });
+
+  const sponsoredCards =
+    videosMode === "only"
+      ? []
+      : rankRest(
           sponsoredRankables,
-          rankCtx,
-          rankMode,
           Math.max(8, Math.ceil(query.limit * 0.2)),
-        )
-  ).map((c) => ({ ...c, isSponsored: true }));
+        ).map((c) => ({ ...c, isSponsored: true }));
 
   // Today / weekend / Select Date / topic-browse For You: lead with sponsored
   // when inventory exists. Plain For you: keep organic in the first few cards.
@@ -1576,11 +2790,17 @@ app.get("/v1/feed", async (c) => {
       ? 0
       : 3;
 
-  const cards = injectSponsoredIntoFeed(organicCards, sponsoredCards, {
+  const eventCards = injectSponsoredIntoFeed(restCards, sponsoredCards, {
     firstIndex,
     interval: 8,
     maxShare: 0.12,
   }).slice(0, query.limit);
+  const cards =
+    videosMode === "only"
+      ? reelCards
+      : videosMode === "exclude" || browsingVideoSource
+        ? eventCards
+        : [...reelCards, ...eventCards];
 
   const body = {
     mode: query.mode,
@@ -1593,7 +2813,9 @@ app.get("/v1/feed", async (c) => {
   if (todayCacheKey) {
     setTodayFeedCache(todayCacheKey, body);
     c.header("X-Feed-Cache", "miss");
-    return c.json(await overlayTodayFeedForUser(body, uid));
+    return c.json(
+      await overlayTodayFeedForUser(body, uid, { videos: videosMode }),
+    );
   }
   return c.json(body);
   } catch (err) {
@@ -1895,5 +3117,20 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   console.error(`[api] failed to bind :${port}: ${err.message}`);
   process.exit(1);
 });
+
+function shutdown(signal: string) {
+  console.log(`[api] ${signal} — closing`);
+  igHttpsAgent.destroy();
+  try {
+    server.close(() => process.exit(0));
+  } catch {
+    process.exit(0);
+  }
+  // Don't leave tsx watch hanging on open CDN sockets.
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
 
 export default app;

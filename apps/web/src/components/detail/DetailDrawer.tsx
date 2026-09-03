@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import type { FeedCard } from "@bored/shared";
 import { primaryEventType } from "@bored/shared";
 import { api } from "@/lib/api";
 import { EventDetailContent } from "./EventDetailContent";
@@ -10,6 +11,7 @@ import {
   type MeshPalette,
 } from "./LumaMeshBackground";
 import { MovieDetailContent } from "./MovieDetailContent";
+import { ReelsPlayer } from "./ReelsPlayer";
 import type { DetailSelection, EventDetail, FilmDetail } from "./types";
 
 const DEFAULT_MESH: MeshPalette = MESH_PALETTES.event;
@@ -17,17 +19,34 @@ const DEFAULT_MESH: MeshPalette = MESH_PALETTES.event;
 export function DetailDrawer({
   selection,
   onClose,
+  reelPlaylist = [],
 }: {
   selection: DetailSelection;
   onClose: () => void;
+  reelPlaylist?: FeedCard[];
 }) {
   const titleId = useId();
+  const reelCards =
+    selection.kind === "event"
+      ? reelPlaylist.filter((c) => c.kind !== "movie_showtime")
+      : [];
+  const reelIndex = reelCards.findIndex((c) => c.id === selection.id);
+  const isReelPlayer = reelIndex >= 0;
+
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [film, setFilm] = useState<FilmDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (isReelPlayer) {
+      setLoading(false);
+      setError(null);
+      setEvent(null);
+      setFilm(null);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -55,9 +74,10 @@ export function DetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [selection.kind, selection.id]);
+  }, [selection.kind, selection.id, isReelPlayer]);
 
   const meshColors = useMemo((): MeshPalette => {
+    if (isReelPlayer) return MESH_PALETTES.food;
     if (film) return MESH_PALETTES.movies;
     if (!event) return DEFAULT_MESH;
     const type = primaryEventType({
@@ -68,7 +88,7 @@ export function DetailDrawer({
       kind: "event",
     });
     return MESH_PALETTES[type.kind] ?? DEFAULT_MESH;
-  }, [event, film]);
+  }, [event, film, isReelPlayer]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -100,15 +120,15 @@ export function DetailDrawer({
         onClick={onClose}
       />
       <aside
-        className="detail-drawer"
+        className={`detail-drawer${isReelPlayer ? " is-reels" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <LumaMeshBackground colors={meshColors} />
+        {!isReelPlayer && <LumaMeshBackground colors={meshColors} />}
         <div className="detail-drawer__chrome">
           <p id={titleId} className="eyebrow detail-drawer__label">
-            Details
+            {isReelPlayer ? "Reels" : "Details"}
           </p>
           <button
             type="button"
@@ -131,16 +151,20 @@ export function DetailDrawer({
           </button>
         </div>
 
-        <div className="detail-drawer__scroll">
-          {loading && <p className="muted">Loading…</p>}
-          {error && <p className="muted">{error}</p>}
-          {!loading && !error && event && (
-            <EventDetailContent event={event} compact />
-          )}
-          {!loading && !error && film && (
-            <MovieDetailContent data={film} compact />
-          )}
-        </div>
+        {isReelPlayer ? (
+          <ReelsPlayer cards={reelCards} initialId={selection.id} />
+        ) : (
+          <div className="detail-drawer__scroll">
+            {loading && <p className="muted">Loading…</p>}
+            {error && <p className="muted">{error}</p>}
+            {!loading && !error && event && (
+              <EventDetailContent event={event} compact />
+            )}
+            {!loading && !error && film && (
+              <MovieDetailContent data={film} compact />
+            )}
+          </div>
+        )}
       </aside>
     </div>
   );

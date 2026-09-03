@@ -188,6 +188,8 @@ export function isEarlierEvent(
 export type DayCardLabel = {
   key: string;
   weekday: string;
+  /** Full weekday name (e.g. "Wednesday") for section titles. */
+  weekdayLong: string;
   dateLine: string;
   isToday: boolean;
   /** Fri / Sat / Sun in the given timezone. */
@@ -206,6 +208,10 @@ export function dayCardLabel(
     timeZone,
     weekday: "short",
   });
+  const weekdayLong = noon.toLocaleDateString("en-US", {
+    timeZone,
+    weekday: "long",
+  });
   const dateLine = noon.toLocaleDateString("en-US", {
     timeZone,
     month: "short",
@@ -216,8 +222,31 @@ export function dayCardLabel(
   return {
     key: yyyyMmDd,
     weekday,
+    weekdayLong,
     dateLine,
     isToday: yyyyMmDd === dayKey(now, timeZone),
     isWeekend,
   };
+}
+
+/** Compact relative time for reel / tip “posted” labels. */
+export function formatTimeAgo(
+  iso: string | Date | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  if (iso == null) return null;
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return null;
+  const sec = Math.round((now.getTime() - d.getTime()) / 1000);
+  if (sec < 45) return "just now";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const month = Math.round(day / 30);
+  if (month < 12) return `${month}mo ago`;
+  const year = Math.round(day / 365);
+  return `${year}y ago`;
 }

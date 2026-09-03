@@ -3,6 +3,7 @@ import {
   cityKeyFromLabel,
   dailyHoursFromClockLabels,
   fromZonedTime,
+  inferComedyCategory,
   TIME_TBA_TAG,
   type DailyHours,
 } from "@bored/shared";
@@ -49,7 +50,7 @@ function tmTbaDailyHours(title: string, venue: string): DailyHours | null {
 }
 
 /** SF Civic Center — ~50mi covers SF + East Bay + Peninsula + South Bay. */
-const SF_GEO = {
+export const SF_GEO = {
   latlong: "37.7749,-122.4194",
   radiusMiles: "50",
   timezone: "America/Los_Angeles",
@@ -57,7 +58,7 @@ const SF_GEO = {
 };
 
 /** Loop — ~40mi covers city + near-north / west suburbs. */
-const CHI_GEO = {
+export const CHI_GEO = {
   latlong: "41.8781,-87.6298",
   radiusMiles: "40",
   timezone: "America/Chicago",
@@ -72,7 +73,8 @@ const LA_GEO = {
   stateCodes: new Set(["CA"]),
 };
 
-const COMEDY_VENUE_KEYWORDS = /cobb|punch\s*line|punchline/i;
+const COMEDY_VENUE_KEYWORDS =
+  /cobb|punch\s*line|punchline|comedy store|laugh factory|hollywood improv|flappers|largo/i;
 
 type TmEvent = {
   id: string;
@@ -117,7 +119,10 @@ type TmResponse = {
 };
 
 /** Same-day coalesce + multi-day cap + orphan ids for runner GC. */
-function tmFetchResult(events: NormalizedEvent[]): AdapterFetchResult {
+function tmFetchResult(
+  events: NormalizedEvent[],
+  purgeLegacyCoalesceSources: string[] = ["ticketmaster", "comedy_venue"],
+): AdapterFetchResult {
   const { events: finalized, orphans } = finalizeTicketmasterEvents(events);
   const bySource = new Map<string, Set<string>>();
   for (const { source, sourceEventId } of orphans) {
@@ -135,7 +140,7 @@ function tmFetchResult(events: NormalizedEvent[]): AdapterFetchResult {
     deleteSourceEventIds: deleteSourceEventIds.length
       ? deleteSourceEventIds
       : undefined,
-    purgeLegacyCoalesceSources: ["ticketmaster", "comedy_venue"],
+    purgeLegacyCoalesceSources,
   };
 }
 
@@ -377,7 +382,7 @@ function normalizeTmEvent(
 
   const segment = ev.classifications?.[0]?.segment?.name?.toLowerCase() ?? "";
   const genre = ev.classifications?.[0]?.genre?.name?.toLowerCase() ?? "";
-  const categories = mapTmCategories(segment, genre, venueName);
+  const categories = mapTmCategories(segment, genre, venueName, ev.name);
   const priceMin = ev.priceRanges?.[0]?.min ?? null;
   const priceMax = ev.priceRanges?.[0]?.max ?? null;
   const image = pickTmImage(ev.images);
@@ -541,7 +546,12 @@ export const comedyVenueAdapter = createComedyVenueAdapter({
   adapterId: "comedy_venue",
   description: "Cobb's and Punch Line via Ticketmaster keyword search",
   geo: SF_GEO,
-  keywords: ["Cobb's Comedy Club", "Punch Line San Francisco"],
+  keywords: [
+    "Cobb's Comedy Club",
+    "Punch Line San Francisco",
+    "Throckmorton Theatre",
+    "142 Throckmorton",
+  ],
 });
 
 export const comedyVenueChicagoAdapter = createComedyVenueAdapter({
@@ -555,6 +565,7 @@ export const comedyVenueChicagoAdapter = createComedyVenueAdapter({
     "The Comedy Bar Chicago",
     "Second City Chicago",
     "iO Chicago",
+    "Chicago Improv",
   ],
 });
 
@@ -565,15 +576,339 @@ export const comedyVenueLaAdapter = createComedyVenueAdapter({
   geo: LA_GEO,
   keywords: [
     "The Comedy Store",
+    "Comedy Store Belly Room",
     "Laugh Factory Hollywood",
     "Hollywood Improv",
     "Dynasty Typewriter",
     "Upright Citizens Brigade",
+    "Flappers Comedy Club",
+    "Largo at the Coronet",
   ],
 });
 
-function mapTmCategories(segment: string, genre: string, venue: string): string[] {
-  if (COMEDY_VENUE_KEYWORDS.test(venue) || /comedy/i.test(segment + genre)) {
+function stageTagsFromTitle(title: string): string[] {
+  const tags = new Set<string>(["theater", "stage_venue", "ticketmaster"]);
+  const lower = title.toLowerCase();
+  if (/\bbroadway\b/.test(lower)) tags.add("broadway");
+  if (/\bmusical\b/.test(lower)) tags.add("musical");
+  if (/\b(opera|operetta)\b/.test(lower)) tags.add("opera");
+  if (/\b(ballet|dance)\b/.test(lower)) tags.add("dance");
+  if (/\bplay\b/.test(lower)) tags.add("play");
+  return [...tags];
+}
+
+/** Live theater venue pulls (same TM API, arts categories). */
+function createStageVenueAdapter(opts: {
+  adapterId: string;
+  description: string;
+  geo: typeof SF_GEO;
+  keywords: string[];
+}): SourceAdapter {
+  return {
+    id: opts.adapterId,
+    description: opts.description,
+    async fetch() {
+      const key = process.env.TICKETMASTER_API_KEY;
+      if (!key) {
+        console.warn(`[${opts.adapterId}] TICKETMASTER_API_KEY missing — skipping`);
+        return {
+          events: [],
+          purgeLegacyCoalesceSources: ["ticketmaster", "stage_venue"],
+        };
+      }
+
+      const startDateTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      const events: NormalizedEvent[] = [];
+      const seen = new Set<string>();
+
+      for (const keyword of opts.keywords) {
+        const params = new URLSearchParams({
+          apikey: key,
+          keyword,
+          latlong: opts.geo.latlong,
+          radius: opts.geo.radiusMiles,
+          unit: "miles",
+          countryCode: "US",
+          startDateTime,
+          size: "50",
+          sort: "date,asc",
+        });
+        const data = await fetchJson<TmResponse>(
+          `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+        );
+        for (const ev of data._embedded?.events ?? []) {
+          const normalized = normalizeTmEvent(ev, {
+            timezone: opts.geo.timezone,
+            stateCodes: opts.geo.stateCodes,
+          });
+          if (!normalized) continue;
+          if (
+            normalized.categories?.some((c) => c.startsWith("comedy.")) ||
+            /\b(stand-?up|standup|comedy|open\s*mic)\b/i.test(normalized.title)
+          ) {
+            continue;
+          }
+          const stageEvent: NormalizedEvent = {
+            ...normalized,
+            source: "stage_venue",
+            categories: ["arts"],
+            tags: Array.from(
+              new Set([
+                ...(normalized.tags ?? []),
+                ...stageTagsFromTitle(normalized.title),
+              ]),
+            ),
+            rawPayload: {
+              ...(typeof normalized.rawPayload === "object" &&
+              normalized.rawPayload
+                ? normalized.rawPayload
+                : {}),
+              keyword,
+            },
+          };
+          if (seen.has(stageEvent.sourceEventId)) continue;
+          seen.add(stageEvent.sourceEventId);
+          events.push(stageEvent);
+        }
+      }
+      return tmFetchResult(events, ["ticketmaster", "stage_venue"]);
+    },
+  };
+}
+
+export const stageVenueAdapter = createStageVenueAdapter({
+  adapterId: "stage_venue",
+  description: "SF Bay live theater via Ticketmaster keyword search",
+  geo: SF_GEO,
+  keywords: [
+    "Orpheum Theatre San Francisco",
+    "Golden Gate Theatre",
+    "Curran Theatre",
+    "ACT Geary Theater",
+    "SF Playhouse",
+    "Berkeley Repertory Theatre",
+  ],
+});
+
+export const stageVenueChicagoAdapter = createStageVenueAdapter({
+  adapterId: "stage_venue_chi",
+  description: "Chicago live theater via Ticketmaster keyword search",
+  geo: CHI_GEO,
+  keywords: [
+    "Goodman Theatre Chicago",
+    "Steppenwolf Theatre",
+    "Chicago Shakespeare Theater",
+    "Broadway in Chicago",
+    "Ambassador Theatre Chicago",
+    "Cadillac Palace Theatre",
+  ],
+});
+
+export const stageVenueLaAdapter = createStageVenueAdapter({
+  adapterId: "stage_venue_la",
+  description: "LA live theater via Ticketmaster keyword search",
+  geo: LA_GEO,
+  keywords: [
+    "Hollywood Pantages Theatre",
+    "Ahmanson Theatre",
+    "Mark Taper Forum",
+    "Geffen Playhouse",
+    "Broadway Los Angeles",
+  ],
+});
+
+function musicVenueTagsFromTitle(title: string, genre: string): string[] {
+  const tags = new Set<string>(["live_music", "music_venue", "ticketmaster"]);
+  const blob = `${title} ${genre}`.toLowerCase();
+  if (/\bpunk\b/.test(blob)) tags.add("punk");
+  if (/\bmetal\b/.test(blob)) tags.add("metal");
+  if (/\bindie\b/.test(blob)) tags.add("indie");
+  if (/\bjazz\b/.test(blob)) tags.add("jazz");
+  if (/\bhip[\s-]?hop|rap\b/.test(blob)) tags.add("hip_hop");
+  if (/\brock\b/.test(blob)) tags.add("rock");
+  if (/\bblues\b/.test(blob)) tags.add("blues");
+  if (/\bfolk\b/.test(blob)) tags.add("folk");
+  if (/\bcountry\b/.test(blob)) tags.add("country");
+  return [...tags];
+}
+
+function musicVenueCategories(normalized: NormalizedEvent): string[] {
+  const existing = (normalized.categories ?? []).filter((c) =>
+    c.startsWith("music."),
+  );
+  if (existing.length) return existing;
+  return ["music.live"];
+}
+
+/** Flagship concert rooms via TM keyword search (Independent, Bill Graham, …). */
+function createMusicVenueAdapter(opts: {
+  adapterId: string;
+  description: string;
+  geo: typeof SF_GEO;
+  keywords: string[];
+}): SourceAdapter {
+  return {
+    id: opts.adapterId,
+    description: opts.description,
+    async fetch() {
+      const key = process.env.TICKETMASTER_API_KEY;
+      if (!key) {
+        console.warn(`[${opts.adapterId}] TICKETMASTER_API_KEY missing — skipping`);
+        return {
+          events: [],
+          purgeLegacyCoalesceSources: ["ticketmaster", "music_venue"],
+        };
+      }
+
+      const startDateTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      const events: NormalizedEvent[] = [];
+      const seen = new Set<string>();
+
+      for (const keyword of opts.keywords) {
+        const params = new URLSearchParams({
+          apikey: key,
+          keyword,
+          latlong: opts.geo.latlong,
+          radius: opts.geo.radiusMiles,
+          unit: "miles",
+          countryCode: "US",
+          startDateTime,
+          size: "50",
+          sort: "date,asc",
+        });
+        const data = await fetchJson<TmResponse>(
+          `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+        );
+        for (const ev of data._embedded?.events ?? []) {
+          const normalized = normalizeTmEvent(ev, {
+            timezone: opts.geo.timezone,
+            stateCodes: opts.geo.stateCodes,
+          });
+          if (!normalized) continue;
+          if (
+            normalized.categories?.some((c) => c.startsWith("comedy.")) ||
+            /\b(stand-?up|standup|comedy|open\s*mic)\b/i.test(normalized.title)
+          ) {
+            continue;
+          }
+          if (
+            normalized.categories?.some((c) => c === "outdoors") &&
+            /\bsport/i.test((normalized.tags ?? []).join(" "))
+          ) {
+            continue;
+          }
+          const genreTag =
+            (normalized.tags ?? []).find((t) => !/ticketmaster|sports/i.test(t)) ??
+            "";
+          const musicEvent: NormalizedEvent = {
+            ...normalized,
+            source: "music_venue",
+            categories: musicVenueCategories(normalized),
+            tags: Array.from(
+              new Set([
+                ...(normalized.tags ?? []),
+                ...musicVenueTagsFromTitle(normalized.title, genreTag),
+              ]),
+            ),
+            rawPayload: {
+              ...(typeof normalized.rawPayload === "object" &&
+              normalized.rawPayload
+                ? normalized.rawPayload
+                : {}),
+              keyword,
+            },
+          };
+          if (seen.has(musicEvent.sourceEventId)) continue;
+          seen.add(musicEvent.sourceEventId);
+          events.push(musicEvent);
+        }
+      }
+      return tmFetchResult(events, ["ticketmaster", "music_venue"]);
+    },
+  };
+}
+
+export const musicVenueAdapter = createMusicVenueAdapter({
+  adapterId: "music_venue",
+  description: "SF Bay concert rooms via Ticketmaster keyword search",
+  geo: SF_GEO,
+  keywords: [
+    "The Independent San Francisco",
+    "Bill Graham Civic Auditorium",
+    "The Fillmore San Francisco",
+    "The Warfield",
+    "Great American Music Hall",
+    "Bottom of the Hill",
+    "The Chapel San Francisco",
+    "Cafe du Nord",
+    "Bimbo's 365 Club",
+    "August Hall San Francisco",
+    "Brick & Mortar Music Hall",
+    "Fox Theater Oakland",
+    "Greek Theatre Berkeley",
+    "Rickshaw Stop",
+    "Kilowatt San Francisco",
+  ],
+});
+
+export const musicVenueChicagoAdapter = createMusicVenueAdapter({
+  adapterId: "music_venue_chi",
+  description: "Chicago concert rooms via Ticketmaster keyword search",
+  geo: CHI_GEO,
+  keywords: [
+    "Metro Chicago",
+    "Riviera Theatre Chicago",
+    "Thalia Hall Chicago",
+    "Empty Bottle Chicago",
+    "The Hideout Chicago",
+    "Lincoln Hall Chicago",
+    "Vic Theatre Chicago",
+    "Chicago Theatre",
+    "Aragon Ballroom Chicago",
+    "Salt Shed Chicago",
+    "House of Blues Chicago",
+    "Schubas Tavern",
+    "Beat Kitchen Chicago",
+    "Reggies Chicago",
+  ],
+});
+
+export const musicVenueLaAdapter = createMusicVenueAdapter({
+  adapterId: "music_venue_la",
+  description: "LA concert rooms via Ticketmaster keyword search",
+  geo: LA_GEO,
+  keywords: [
+    "Troubadour West Hollywood",
+    "The Roxy Theatre Hollywood",
+    "Whisky a Go Go",
+    "Fonda Theatre",
+    "El Rey Theatre Los Angeles",
+    "Teragram Ballroom",
+    "Lodge Room Highland Park",
+    "Hollywood Palladium",
+    "The Wiltern",
+    "Greek Theatre Los Angeles",
+    "Echoplex Los Angeles",
+    "Zebulon Los Angeles",
+    "The Novo Los Angeles",
+    "Walt Disney Concert Hall",
+  ],
+});
+
+function mapTmCategories(
+  segment: string,
+  genre: string,
+  venue: string,
+  title = "",
+): string[] {
+  const comedy = inferComedyCategory({
+    title,
+    venueName: venue,
+    segment,
+    genre,
+  });
+  if (comedy) return [comedy];
+  if (COMEDY_VENUE_KEYWORDS.test(venue)) {
     return ["comedy.club"];
   }
   const fromGenre = categoriesFromMusicGenreLabel(genre);
@@ -607,4 +942,99 @@ function tmGenreTags(genre: string, categories: string[]): string[] {
   const isComedyCat = categories.some((c) => c.startsWith("comedy."));
   if (isComedyCat && /comedy/i.test(genre)) return [];
   return [genre];
+}
+
+export type MusicFestivalTmSearch = {
+  geo: typeof SF_GEO;
+  keyword: string;
+  festivalId: string;
+  /** Short slug for tags, e.g. lollapalooza */
+  slug: string;
+};
+
+function musicFestivalTags(
+  normalized: NormalizedEvent,
+  slug: string,
+): string[] {
+  return Array.from(
+    new Set([
+      ...(normalized.tags ?? []),
+      "festival",
+      "music_festival",
+      slug,
+      "ticketmaster",
+    ]),
+  );
+}
+
+function musicFestivalCategories(normalized: NormalizedEvent): string[] {
+  const musicCats = (normalized.categories ?? []).filter((c) =>
+    c.startsWith("music."),
+  );
+  return musicCats.length ? musicCats : ["music.live"];
+}
+
+/** Ticketmaster keyword pulls for optional festival enrichment (image/price). */
+export async function fetchMusicFestivalTmEvents(
+  adapterId: string,
+  searches: MusicFestivalTmSearch[],
+): Promise<NormalizedEvent[]> {
+  const key = process.env.TICKETMASTER_API_KEY;
+  if (!key) {
+    console.warn(`[${adapterId}] TICKETMASTER_API_KEY missing — skipping TM pulls`);
+    return [];
+  }
+
+  const startDateTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const events: NormalizedEvent[] = [];
+  const seen = new Set<string>();
+
+  for (const search of searches) {
+    try {
+      const params = new URLSearchParams({
+        apikey: key,
+        keyword: search.keyword,
+        latlong: search.geo.latlong,
+        radius: search.geo.radiusMiles,
+        unit: "miles",
+        countryCode: "US",
+        startDateTime,
+        size: "50",
+        sort: "date,asc",
+      });
+      const data = await fetchJson<TmResponse>(
+        `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+      );
+      for (const ev of data._embedded?.events ?? []) {
+        const normalized = normalizeTmEvent(ev, {
+          timezone: search.geo.timezone,
+          stateCodes: search.geo.stateCodes,
+        });
+        if (!normalized) continue;
+        const festEvent: NormalizedEvent = {
+          ...normalized,
+          source: "music_festival",
+          categories: musicFestivalCategories(normalized),
+          tags: musicFestivalTags(normalized, search.slug),
+          rawPayload: {
+            ...(typeof normalized.rawPayload === "object" && normalized.rawPayload
+              ? normalized.rawPayload
+              : {}),
+            festivalId: search.festivalId,
+            keyword: search.keyword,
+          },
+        };
+        if (seen.has(festEvent.sourceEventId)) continue;
+        seen.add(festEvent.sourceEventId);
+        events.push(festEvent);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[${adapterId}] TM keyword "${search.keyword}" failed — ${message}`,
+      );
+    }
+  }
+
+  return events;
 }

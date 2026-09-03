@@ -24,8 +24,9 @@ How to bring a new metro to parity with SF's vertical depth. SF is the reference
 |---|---|---|
 | `food` | Infatuation + Eater Chicago RSS | Evergreen tips via `FOOD_METRO_CONFIGS` |
 | `food_deals` | `CURATED_FOOD_DEALS_CHICAGO` (10 deals) | One durable row per deal + feed expand; `America/Chicago` |
-| `recurring` | `recurring_shows` (7 CHI rooms) | Zanies, Comedy Bar, Laugh Factory, Second City, Lincoln Lodge, iO, Annoyance |
+| `recurring` | `recurring_shows` (comedy + jazz/punk/blues rooms) | Zanies… + Green Mill, Empty Bottle, Kingston Mines, … |
 | `comedy_venue_chi` | Ticketmaster keyword search | Same `source=comedy_venue` as SF |
+| `music_venue_chi` | Ticketmaster keyword search | Metro, Thalia Hall, Salt Shed, Empty Bottle, … |
 
 **Evergreen activities** — see [City expansion strategy](./city-expansion-strategy.md); `activities` adapter when curated rows exist for CHI.
 
@@ -42,7 +43,7 @@ How to bring a new metro to parity with SF's vertical depth. SF is the reference
 | Partiful | `partiful` explore | **P3** — best-effort; verify CHI coverage first |
 | Open mic proposals | `openmic_agg` | **P3** — SF-only aggregator today |
 
-**Shipped in Chicago (topic-ready):** food tips, food deals, comedy recurring + `comedy_venue_chi`, evergreen activities. Re-ingest after TM category fixes if Concerts/Comedy chips look thin — see [Topic filter categorization](#topic-filter-categorization-every-metro).
+**Shipped in Chicago (topic-ready):** food tips, food deals, comedy recurring + `comedy_venue_chi`, live music rooms (`music_venue_chi` + Green Mill / Empty Bottle / blues recurring), evergreen activities. Re-ingest after TM category fixes if Concerts/Comedy chips look thin — see [Topic filter categorization](#topic-filter-categorization-every-metro).
 
 ## Seeding principles
 
@@ -63,8 +64,8 @@ Topic chips (`FEED_TOPICS` in `taxonomy.ts`) are **not** separate tags you add a
 
 | Topic chip | Minimum `categories[]` | Also matches via |
 |---|---|---|
-| **Concerts** | Any `music.*` (`music.live`, `music.electronic`, …) | `source` `19hz` / `ra`; genre tags; title/venue heuristics |
-| **Comedy** | Any `comedy.*` | `source` `comedy_venue` / `recurring`; `comedy` / `standup` tags; club venue names |
+| **Concerts** | Any `music.*` (`music.live`, `music.electronic`, …) | `source` `19hz` / `ra` / `music_venue`; genre tags; title/venue heuristics; jazz/punk **recurring** rooms |
+| **Comedy** | Any `comedy.*` | `source` `comedy_venue`; comedy **recurring** rooms only (not all `recurring`) |
 | **Movies** | `movies` or showtime cards | `kind: movie_showtime` (SF/Bay TMS today) |
 | **Sports** | — | `sports` tag; sports copy in title/tags |
 | **Street festivals** | — | `festival`, `block party`, `night market` in tags/title |
@@ -86,8 +87,9 @@ Topic chips (`FEED_TOPICS` in `taxonomy.ts`) are **not** separate tags you add a
 | Eventbrite | `eventbrite.ts` → `mapEbCategories()` | EB category tags + title fallback |
 | Ticketmaster | `ticketmaster.ts` → `mapTmCategories()` | Segment **and** genre → `music.live`; sports → `outdoors` + `sports` tag |
 | 19hz / RA | `nineteenHz.ts`, `ra.ts` | Base `music.electronic` + `enrichCategoriesWithTags()` |
-| Comedy clubs | `ticketmaster.ts` → `comedy_venue` / `comedy_venue_chi` | Force `comedy.club` + standup tags |
-| Recurring rooms | `recurringComedy.ts` | Uses `recurring_shows.comedySubtype` |
+| Comedy clubs | `ticketmaster.ts` → `comedy_venue` / `comedy_venue_chi` / `comedy_venue_la` | Force `comedy.club` + standup tags |
+| Concert rooms | `ticketmaster.ts` → `music_venue` / `music_venue_chi` / `music_venue_la` | Force `music.*` / `music.live` |
+| Recurring rooms | `recurringComedy.ts` | Uses `recurring_shows.comedy_subtype` (`comedy.*` **or** `music.*`) |
 | Food / deals | `food.ts`, `foodDeals.ts` | `food` category + correct `source` |
 
 Full contract: [Category mapping for topic filters](./ingest.md#category-mapping-for-topic-filters).
@@ -102,7 +104,7 @@ Phase 1 adapters **do** categorize most rows (verified against live DB):
 | `ra` | ✅ | — | — |
 | `ticketmaster` | ✅ (partial — some rows were `nightlife`-only) | ✅ (partial) | — |
 | `comedy_venue` | — | ✅ | — |
-| `recurring` | — | ✅ | — |
+| `recurring` | ✅ jazz/blues/punk | ✅ comedy | — |
 | `do312` | ✅ | ✅ | ✅ |
 | `chicago_cheap` | ✅ | ✅ (title heuristics) | ✅ |
 | `eventbrite` | ✅ | ✅ | ✅ |
@@ -112,7 +114,7 @@ Phase 1 adapters **do** categorize most rows (verified against live DB):
 **Chicago backfill (after TM category fixes):** re-run ingest so Ticketmaster rows pick up genre-based `music.*` and `sports` tags — upsert updates existing rows in place.
 
 ```bash
-pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_chi,comedy_venue_chi,recurring,do312,chicago_cheap,19hz_chi,ra_chi,eventbrite_chi,food,food_deals,activities
+pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_chi,comedy_venue_chi,music_venue_chi,recurring,do312,chicago_cheap,19hz_chi,ra_chi,eventbrite_chi,food,food_deals,activities
 ```
 
 **Movies topic in Chicago:** still weak until Phase D (TMS CHI) — `topics=movies` may only surface Eventbrite/festival listings tagged `movies`, not poster showtime cards.
@@ -131,15 +133,16 @@ Phase 1 + food + comedy + activities + hero shipped in code. Live adapters:
 | `19hz_la` | 19hz | `eventlisting_LosAngeles.php` |
 | `eventbrite_la` | eventbrite | `ca--los-angeles` slug |
 | `dola` | dola | DoLA local calendar (all events; `is_free` → Free topic) |
-| `comedy_venue_la` | ticketmaster | Comedy Store, Laugh Factory, Improv, … |
-| `recurring` | recurring | LA rooms in `recurring_shows` seed |
+| `comedy_venue_la` | ticketmaster | Comedy Store (Original + Belly), Laugh Factory, Improv, Flappers, Largo, … |
+| `music_venue_la` | ticketmaster | Troubadour, Fonda, Wiltern, Palladium, Zebulon, Lodge Room, … |
+| `recurring` | recurring | LA comedy + jazz/indie rooms in `recurring_shows` seed |
 | `food` / `food_deals` | food | Eater LA + Infatuation LA; curated deals |
 | `activities` | activities | `CURATED_ACTIVITIES_LA` (22 rows) |
 
 **No dedicated LA cheap-calendar HTML adapter in v1** — Free topic uses DoLA `is_free` + Eventbrite; editorial sites (Free in LA, GoHiLo) were unreachable at research time.
 
 ```bash
-pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_la,luma_la,ra_la,19hz_la,eventbrite_la,dola,comedy_venue_la,recurring,food,food_deals,activities
+pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=ticketmaster_la,luma_la,ra_la,19hz_la,eventbrite_la,dola,comedy_venue_la,music_venue_la,recurring,food,food_deals,activities
 ```
 
 **Topic smoke (`area=la`):**
@@ -250,13 +253,15 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --once --only=recurring,comedy_v
 
 ---
 
-### Phase E — Instagram + polish (P2–P3)
+### Phase E — Instagram + YouTube (P2–P3)
 
 **Work items:**
 
-1. **`instagram` adapter — Chicago handles**
-   - `eater_chi`, `theinfatuation` (city-filter captions), `timeoutchicago`, local food influencers
-   - Tag rows with `city: "chicago"`
+1. **`instagram` + `youtube` adapters — metro handles only**
+   - IG: `eater_chi`, `infatuationchi`, `timeoutchicago`, local food creators — **not** national `theinfatuation`
+   - YT: city channels (`EaterChicago`, `ChooseChicago`) — national `Eater` only if captions still pass locality
+   - Tag rows `city: "chicago"` **and** extend `videoLocality.ts` (`LOCAL_RE`, `NEIGHBORHOODS`, `LOCAL_OUTLETS`)
+   - Follow [IG / YouTube city expansion](./city-expansion-strategy.md#instagram--youtube-city-expansion) — skip reels without Graph `media_url`; feed re-filters travel captions
 
 2. **Neighborhoods** ✅
    - `CHI_NEIGHBORHOODS` + `neighborhoodsForCity()` in `taxonomy.ts`
@@ -284,8 +289,10 @@ When adding city **N**:
 | 4 | **Category mapping** — each adapter sets `categories[]` per [topic filter contract](./ingest.md#category-mapping-for-topic-filters); port `funcheapTaxonomy` / `mapDo312Categories` patterns for local calendars |
 | 5 | Run Phase 1 ingest; verify `eventInArea('n', …)` isolation |
 | 6 | Port food vertical (config + curated deals) |
-| 7 | Seed `recurring_shows` with `city = 'n'` + comedy subtypes |
-| 8 | Add `comedy_venue` TM keywords for local clubs |
+| 7 | Seed `recurring_shows` with `city = 'n'` + comedy subtypes — see [Comedy sourcing](./ingest.md#comedy-sourcing-city-expansion) |
+| 7b | Seed jazz / punk / blues / indie **live music** recurring rooms (`music.jazz`, `music.punk`, …) — see [Live music sourcing](./ingest.md#live-music-sourcing-city-expansion) |
+| 8 | Add `comedy_venue_*` TM keywords for local clubs (flagship + multi-room venues) |
+| 8b | Add `music_venue_*` TM keywords for flagship concert rooms (Independent / Metro / Troubadour-class) — [Live music sourcing](./ingest.md#live-music-sourcing-city-expansion) |
 | 9 | Configure TMS zip + optional indie theaters |
 | 10 | **Curate evergreen activities** (≥20 rows, iconic + local gems) — [expansion strategy](./city-expansion-strategy.md) |
 | 11 | Wire `activities` adapter; set `outdoors` / `arts` categories for topic chips |
@@ -295,6 +302,7 @@ When adding city **N**:
 | 14b | **City hero** — Unsplash cover + party palette + place-specific lede in `apps/web/src/lib/city-heroes.ts` — [expansion strategy — City hero](./city-expansion-strategy.md#city-hero-web); run `pnpm check:city-heroes` to verify every cover URL returns 200 |
 | 14c | **Venue / locality geo** — add city + common venue centroids to `packages/shared/src/venueGeo.ts` so address-only Funcheap/scrape rows get weather + maps — [architecture](./architecture.md#event-location--weather) |
 | 14d | **Feed demotions** — no demotion-specific city lists. Rules use `eventInArea` / `FEED_AREAS` (`packages/shared/src/feedDemotion.ts`). After taxonomy is wired, existing metro filters and Admin metro dropdown pick up the new area automatically. Revisit ops rules only if a local venue needs burying — [Ranking](./ranking.md#feed-demotion-rules) |
+| 14e | **IG / YouTube** — metro seed handles in `igCreators.ts` / `CURATED_CHANNELS` + `videoLocality.ts` (local regex, neighborhoods, outlets, foreign drop). Target ≥15 IG handles/metro (outlets + creators). Admin can add more at `/admin/instagram`. Do not ingest travel captions or reels without `media_url` — [expansion strategy](./city-expansion-strategy.md#instagram--youtube-city-expansion) |
 | 15 | Document adapters in [ingest.md](./ingest.md) |
 
 ## Suggested implementation order (Chicago)
@@ -314,7 +322,9 @@ Later:   Phase E polish (IG, partiful) for any metro
 | Curated food deals | `packages/shared/src/foodDeals.ts` (`CURATED_FOOD_DEALS_SF`, `CURATED_FOOD_DEALS_CHICAGO`) |
 | Food metro config | `packages/shared/src/foodCityConfig.ts` (`FOOD_METRO_CONFIGS`) |
 | Food ingest | `packages/ingest/src/adapters/food.ts`, `foodDeals.ts`, `foodEditorial.ts` |
+| Instagram / YouTube | `packages/ingest/src/igCreators.ts`, `adapters/instagram.ts`, `youtube.ts`; locality `packages/shared/src/videoLocality.ts`; Admin `/admin/instagram` |
 | Comedy recurring | `packages/db/src/seed.ts`, `packages/ingest/src/adapters/recurringComedy.ts` |
+| Live music rooms | `packages/db/src/seed.ts` (`jazzSeed` / `liveMusicBarSeed`), `ticketmaster.ts` (`music_venue_*`) |
 | TM / Luma factories | `packages/ingest/src/adapters/ticketmaster.ts`, `luma.ts` |
 | Adapter registry | `packages/ingest/src/runner.ts` |
 | Feed ranking geo | `apps/api/src/index.ts` (`metroFromArea`, radius widening) |
@@ -335,8 +345,8 @@ Before calling Chicago (or any metro) "seeded" for a vertical:
 | Detail enrich | Open Infatuation/Eater CHI URL from detail page |
 | Ingest audit | `ingest_runs` status ok for new adapters |
 | Source chips | Only show adapters with data; hide empty chips (product decision) |
-| **Topic: Concerts** | `GET /v1/feed?area=chicago&topics=concerts&mode=all&limit=10` — expect 19hz, RA, TM, Do312 music rows |
-| **Topic: Comedy** | `…&topics=comedy` — expect `comedy_venue`, `recurring`, Do312/chicago_cheap comedy |
+| **Topic: Concerts** | `GET /v1/feed?area=chicago&topics=concerts&mode=all&limit=10` — expect 19hz, RA, TM, `music_venue`, Do312, jazz/punk recurring |
+| **Topic: Comedy** | `…&topics=comedy` — expect `comedy_venue`, comedy `recurring`, Do312/chicago_cheap comedy |
 | **Topic: Food** | `…&topics=food` — tips + deals |
 | **Topic: Happy hours** | `…&topics=happy_hours` — `food_deals` (expanded at feed read) |
 | **Topic: Free** | `…&topics=free` — cheap calendars + `isFree` |
@@ -362,9 +372,10 @@ Same playbook applies to LA, NYC, etc. Prioritize:
 1. Phase 1 calendar stack (TM + Luma + RA/local equivalent + cheap events site)
 2. Food tips (highest taste-signal ROI)
 3. Evergreen activities — parks, hikes, local gems ([expansion strategy](./city-expansion-strategy.md))
-4. Comedy + movies (differentiator depth)
+4. Comedy + **live music rooms** (`music_venue_*` + jazz/punk recurring) + movies (differentiator depth)
+5. **Local** IG / YouTube — only with [locality rules](./city-expansion-strategy.md#instagram--youtube-city-expansion)
 
-Avoid launching a city with only Ticketmaster — the feed feels generic. Minimum viable metro = Phase 1 + food tips + evergreen activities + **topic-verified category mapping** (Concerts and Comedy chips must return rows before launch).
+Avoid launching a city with only Ticketmaster Discovery — the feed feels generic. Minimum viable metro = Phase 1 + food tips + evergreen activities + comedy depth + **live music rooms** + **topic-verified category mapping** (Concerts and Comedy chips must return rows before launch).
 
 ## Related docs
 

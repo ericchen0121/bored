@@ -9,6 +9,7 @@ import {
   FEED_TOPIC_LABELS,
   dayKey,
   eventScanTagsForDisplay,
+  isFeedVideoCard,
   matchesAnyFeedTopic,
   metroFromArea,
   topicsPresentInCards,
@@ -21,16 +22,23 @@ import {
 } from "@/components/detail/selection";
 import type { DetailSelection } from "@/components/detail/types";
 import { FeedCardView } from "@/components/FeedCardView";
+import { FeedViewToggle } from "@/components/FeedViewToggle";
+import { SaveButton } from "@/components/SaveButton";
 import { SignInPrompt } from "@/components/SignInPrompt";
 import { useUser } from "@/components/UserProvider";
+import { VideoReelsCarousel } from "@/components/VideoReelsCarousel";
 import { trackDetailOpened } from "@/lib/analytics";
-import { api } from "@/lib/api";
-import { timeZoneForArea } from "@/lib/datetime";
+import { api, recordFeedSignal } from "@/lib/api";
+import { dayCardLabel, timeZoneForArea } from "@/lib/datetime";
 import {
   defaultCalendarMaxDate,
   feedCalendarMeta,
 } from "@/lib/feed-calendar";
-import { feedHomeHref, readFeedPrefs } from "@/lib/feed-prefs";
+import {
+  feedHomeHref,
+  readFeedPrefs,
+  type FeedView,
+} from "@/lib/feed-prefs";
 
 type SavedCard = FeedCard & {
   signalId: string;
@@ -44,6 +52,18 @@ type SavedPayload = {
   past: SavedCard[];
 };
 
+const SAVED_REELS_VIEWS = ["reels", "large"] as const satisfies readonly FeedView[];
+
+function saveTarget(card: FeedCard): {
+  targetKind: "event" | "film";
+  targetId: string;
+} {
+  if (card.kind === "movie_showtime" && card.filmId) {
+    return { targetKind: "film", targetId: card.filmId };
+  }
+  return { targetKind: "event", targetId: card.id };
+}
+
 function toggleTopic(current: FeedTopic[], id: FeedTopic): FeedTopic[] {
   return current.length === 1 && current[0] === id ? [] : [id];
 }
@@ -53,13 +73,18 @@ function venueKey(card: FeedCard): string | null {
   return name || null;
 }
 
+function applyTopicFilter(cards: SavedCard[], topics: FeedTopic[]): SavedCard[] {
+  if (!topics.length) return cards;
+  return cards.filter((c) => matchesAnyFeedTopic(topics, c));
+}
+
 /** Stable SSR/client first paint — session prefs hydrate after mount. */
 const DEFAULT_AREA: FeedArea = "bay";
 const DEFAULT_HOME_HREF = "/sf?mode=today";
 
 export default function SavedPage() {
   const router = useRouter();
-  const { ready, authenticated, toggleSaved, refresh } = useUser();
+  const { ready, authenticated, refresh } = useUser();
   const [data, setData] = useState<SavedPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,6 +94,8 @@ export default function SavedPage() {
   const [showPast, setShowPast] = useState(false);
   const [area, setArea] = useState<FeedArea>(DEFAULT_AREA);
   const [homeHref, setHomeHref] = useState(DEFAULT_HOME_HREF);
+  const [reelsView, setReelsView] = useState<FeedView>("reels");
+  const [reelsShowAll, setReelsShowAll] = useState(false);
 
   const city = metroFromArea(area);
   const timeZone = timeZoneForArea(area);
@@ -118,26 +145,38 @@ export default function SavedPage() {
     return showPast ? [...data.upcoming, ...data.past] : data.upcoming;
   }, [data, showPast]);
 
+  const { reelCards, eventCards } = useMemo(() => {
+    const reels: SavedCard[] = [];
+    const events: SavedCard[] = [];
+    for (const card of baseCards) {
+      if (isFeedVideoCard(card)) reels.push(card);
+      else events.push(card);
+    }
+    return { reelCards: reels, eventCards: events };
+  }, [baseCards]);
+
   const availableTopics = useMemo(
     () => topicsPresentInCards(baseCards),
     [baseCards],
   );
 
-  const filtered = useMemo(() => {
-    let cards = baseCards;
-    if (topics.length) {
-      cards = cards.filter((c) => matchesAnyFeedTopic(topics, c));
-    }
+  const filteredReels = useMemo(
+    () => applyTopicFilter(reelCards, topics),
+    [reelCards, topics],
+  );
+
+  const filteredEvents = useMemo(() => {
+    let cards = applyTopicFilter(eventCards, topics);
     if (selectedDate) {
       cards = cards.filter(
         (c) => c.startsAt && dayKey(c.startsAt, timeZone) === selectedDate,
       );
     }
     return cards;
-  }, [baseCards, topics, selectedDate, timeZone]);
+  }, [eventCards, topics, selectedDate, timeZone]);
 
   const calendarMeta = useMemo(() => {
-    const timed = baseCards.filter((c) => Boolean(c.startsAt));
+    const timed = eventCards.filter((c) => Boolean(c.startsAt));
     const meta = feedCalendarMeta(timed, timeZone);
     const dayCounts = new Map<string, number>();
     for (const card of timed) {
@@ -154,7 +193,7 @@ export default function SavedPage() {
           : meta.maxDate
         : defaultCalendarMaxDate(meta.minDate),
     };
-  }, [baseCards, timeZone]);
+  }, [eventCards, timeZone]);
 
   const stats = useMemo(() => {
     const venues = new Set<string>();
@@ -181,20 +220,12 @@ export default function SavedPage() {
     };
   }, [baseCards]);
 
-  async function unsaveCard(card: FeedCard) {
-    const targetKind = card.kind === "movie_showtime" ? "film" : "event";
-    const targetId =
-      card.kind === "movie_showtime" && card.filmId ? card.filmId : card.id;
-    try {
-      await toggleSaved(targetKind, targetId);
-      if (selection && cardMatchesSelection(card, selection)) {
-        setSelection(null);
-      }
-      await load();
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not unsave");
+  async function afterUnsave(card: FeedCard) {
+    if (selection && cardMatchesSelection(card, selection)) {
+      setSelection(null);
     }
+    await load();
+    await refresh();
   }
 
   function openDetail(card: FeedCard) {
@@ -204,8 +235,25 @@ export default function SavedPage() {
       id: next.id,
       surface: "feed",
     });
+    if (isFeedVideoCard(card) && next.kind === "event") {
+      recordFeedSignal({
+        targetKind: "event",
+        targetId: next.id,
+        type: "opened",
+      });
+    }
     setSelection(next);
   }
+
+  function selectReelsView(view: FeedView) {
+    setReelsView(view);
+    if (view === "large") setReelsShowAll(false);
+  }
+
+  const eventsEmpty = eventCards.length === 0;
+  const eventsFilteredEmpty = filteredEvents.length === 0;
+  const showReelsSection = filteredReels.length > 0;
+  const showEventsFilters = eventCards.length > 0;
 
   return (
     <main className={`saved-page${selection ? " has-detail" : ""}`}>
@@ -283,64 +331,118 @@ export default function SavedPage() {
               </p>
             ) : null}
 
-            {baseCards.length > 0 ? (
-              <>
-                <DayStrip
-                  timeZone={timeZone}
-                  selectedDate={selectedDate}
-                  daysWithEvents={calendarMeta.daysWithEvents}
-                  dayCounts={calendarMeta.dayCounts}
-                  minDate={calendarMeta.minDate}
-                  maxDate={calendarMeta.maxDate}
-                  onSelect={setSelectedDate}
-                  showAllDays
-                  showCalendar
-                />
-
-                {availableTopics.length > 0 ? (
-                  <nav
-                    className="nav nav--topics"
-                    aria-label="Saved topics"
-                    style={{ marginTop: 8 }}
-                  >
-                    <button
-                      type="button"
-                      className={`chip ${topics.length === 0 ? "active" : ""}`}
-                      onClick={() => setTopics([])}
-                    >
-                      All
-                    </button>
-                    {availableTopics.map((id) => (
-                      <button
-                        key={id}
-                        type="button"
-                        className={`chip ${topics.includes(id) ? "active" : ""}`}
-                        onClick={() => setTopics(toggleTopic(topics, id))}
-                      >
-                        <span aria-hidden>{FEED_TOPIC_EMOJI[id]}</span>{" "}
-                        {FEED_TOPIC_LABELS[id]}
-                      </button>
-                    ))}
-                  </nav>
-                ) : null}
-              </>
+            {showEventsFilters ? (
+              <DayStrip
+                timeZone={timeZone}
+                selectedDate={selectedDate}
+                daysWithEvents={calendarMeta.daysWithEvents}
+                dayCounts={calendarMeta.dayCounts}
+                minDate={calendarMeta.minDate}
+                maxDate={calendarMeta.maxDate}
+                onSelect={setSelectedDate}
+                showAllDays
+                showCalendar
+              />
             ) : null}
 
-            <section className="saved-section">
-              <div className="section-title-row">
-                <h2 className="section-title">
-                  {selectedDate
-                    ? "That day"
-                    : showPast
-                      ? "All saved"
-                      : "Upcoming"}
-                  {filtered.length !== baseCards.length
-                    ? ` · ${filtered.length}`
-                    : ""}
-                </h2>
-              </div>
+            {availableTopics.length > 0 && baseCards.length > 0 ? (
+              <nav
+                className="nav nav--topics"
+                aria-label="Saved topics"
+                style={{ marginTop: 8 }}
+              >
+                <button
+                  type="button"
+                  className={`chip ${topics.length === 0 ? "active" : ""}`}
+                  onClick={() => setTopics([])}
+                >
+                  All
+                </button>
+                {availableTopics.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`chip ${topics.includes(id) ? "active" : ""}`}
+                    onClick={() => setTopics(toggleTopic(topics, id))}
+                  >
+                    <span aria-hidden>{FEED_TOPIC_EMOJI[id]}</span>{" "}
+                    {FEED_TOPIC_LABELS[id]}
+                  </button>
+                ))}
+              </nav>
+            ) : null}
 
-              {baseCards.length === 0 ? (
+            {showReelsSection ? (
+              <section className="saved-reels">
+                <div className="section-title-row">
+                  <h2 className="section-title">
+                    Reels &amp; shorts
+                    {filteredReels.length > 0
+                      ? ` · ${filteredReels.length}`
+                      : ""}
+                  </h2>
+                  <div className="section-title-row__actions">
+                    {reelsView === "reels" && filteredReels.length > 3 ? (
+                      <button
+                        type="button"
+                        className="feed-map-link"
+                        onClick={() => setReelsShowAll((v) => !v)}
+                      >
+                        {reelsShowAll ? "Show less" : "Show all"}
+                      </button>
+                    ) : null}
+                    <FeedViewToggle
+                      value={reelsView}
+                      onChange={selectReelsView}
+                      views={SAVED_REELS_VIEWS}
+                      ariaLabel="Saved reels layout"
+                    />
+                  </div>
+                </div>
+
+                {reelsView === "large" ? (
+                  <div className="feed-grid feed-grid--large">
+                    {filteredReels.map((card) => {
+                      const target = saveTarget(card);
+                      return (
+                        <div key={card.signalId} className="saved-card-wrap">
+                          <FeedCardView
+                            card={card}
+                            selected={cardMatchesSelection(card, selection)}
+                            onSelect={openDetail}
+                            timeZone={timeZone}
+                            size="large"
+                          />
+                          <SaveButton
+                            className="saved-card-wrap__save"
+                            targetKind={target.targetKind}
+                            targetId={target.targetId}
+                            returnTo="/saved"
+                            tooltip
+                            onToggled={(saved) => {
+                              if (!saved) void afterUnsave(card);
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <VideoReelsCarousel
+                    cards={filteredReels}
+                    layout={reelsShowAll ? "grid" : "carousel"}
+                    hideHeader
+                    onSelect={openDetail}
+                    isSelected={(card) =>
+                      cardMatchesSelection(card, selection)
+                    }
+                  />
+                )}
+              </section>
+            ) : null}
+
+            {baseCards.length === 0 ? (
+              <section className="saved-section">
                 <p className="muted">
                   Nothing saved yet.{" "}
                   <button
@@ -352,7 +454,9 @@ export default function SavedPage() {
                   </button>
                   .
                 </p>
-              ) : filtered.length === 0 ? (
+              </section>
+            ) : !showReelsSection && eventsFilteredEmpty ? (
+              <section className="saved-section">
                 <p className="muted">
                   No saves match this filter.{" "}
                   <button
@@ -367,28 +471,82 @@ export default function SavedPage() {
                   </button>
                   .
                 </p>
-              ) : (
-                <div className="feed-grid">
-                  {filtered.map((card) => (
-                    <div key={card.signalId} className="saved-card-wrap">
-                      <FeedCardView
-                        card={card}
-                        selected={cardMatchesSelection(card, selection)}
-                        onSelect={openDetail}
-                        timeZone={timeZone}
-                      />
-                      <button
-                        type="button"
-                        className="btn saved-card-unsave"
-                        onClick={() => void unsaveCard(card)}
-                      >
-                        Unsave
-                      </button>
-                    </div>
-                  ))}
+              </section>
+            ) : !eventsEmpty ? (
+              <section className="saved-section">
+                <div className="section-title-row">
+                  <h2 className="section-title">
+                    {selectedDate
+                      ? (() => {
+                          const day = dayCardLabel(selectedDate, timeZone);
+                          return day.isToday ? (
+                            <>
+                              Today{" "}
+                              <span className="section-title__day">
+                                {day.weekdayLong}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="section-title__day">
+                                {day.weekdayLong}
+                              </span>
+                              {" · "}
+                              {day.dateLine}
+                            </>
+                          );
+                        })()
+                      : showPast
+                        ? "Events"
+                        : "Upcoming"}
+                    {` · ${filteredEvents.length}`}
+                  </h2>
                 </div>
-              )}
-            </section>
+
+                {eventsFilteredEmpty ? (
+                  <p className="muted">
+                    No events match this filter.{" "}
+                    <button
+                      type="button"
+                      className="saved-page__linkish"
+                      onClick={() => {
+                        setTopics([]);
+                        setSelectedDate(null);
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                    .
+                  </p>
+                ) : (
+                  <div className="feed-grid">
+                    {filteredEvents.map((card) => {
+                      const target = saveTarget(card);
+                      return (
+                        <div key={card.signalId} className="saved-card-wrap">
+                          <FeedCardView
+                            card={card}
+                            selected={cardMatchesSelection(card, selection)}
+                            onSelect={openDetail}
+                            timeZone={timeZone}
+                          />
+                          <SaveButton
+                            className="saved-card-wrap__save"
+                            targetKind={target.targetKind}
+                            targetId={target.targetId}
+                            returnTo="/saved"
+                            tooltip
+                            onToggled={(saved) => {
+                              if (!saved) void afterUnsave(card);
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -397,6 +555,7 @@ export default function SavedPage() {
         <DetailDrawer
           selection={selection}
           onClose={() => setSelection(null)}
+          reelPlaylist={filteredReels}
         />
       ) : null}
     </main>

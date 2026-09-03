@@ -52,6 +52,7 @@ All three app services build from the **repo root** `Dockerfile`.
 |---|---|---|
 | `DATABASE_URL` | api, ingest-* | From Postgres plugin (SSL auto-detected) |
 | `ADMIN_TOKEN` | api | Required for `/admin` + `/v1/admin/*` |
+| `RAILWAY_PROJECT_TOKEN` | api | Railway project token for `/admin/deploys` status (optional locally if `railway login`) |
 | `WEB_ORIGIN` | api | Public web origin for CORS (e.g. `https://bored.up.railway.app`) |
 | `DEMO_USER_ID` | api | Optional; same UUID as local if you want continuity |
 | `TICKETMASTER_API_KEY` | ingest-* | Optional |
@@ -173,7 +174,7 @@ Bored does **not** run Redis locally or in production. Caching and queues use Po
 
 | Need today | Implementation |
 |---|---|
-| Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **15m** TTL via `TODAY_FEED_CACHE_TTL_MS`, max **24** entries, `limit` ≤ 200 only). Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. |
+| Today feed cache | In-memory `Map` in `apps/api/src/feedCache.ts` (default **15m** TTL via `TODAY_FEED_CACHE_TTL_MS`, max **24** entries, `limit` ≤ 200 only). Key includes `videos=include|exclude|only` and `topics`. Shared for **all users** on `mode=today`; dismissals + `prefsSummary` are overlaid per request. Web Today/For you fetches `exclude` + `only` in parallel for progressive paint; dense topics may be **derived** from the warm All payload (`X-Feed-Cache: derived`). |
 | Admin ingest queue | Postgres `ingest_jobs`, drained at the start of each Railway cron run |
 | Adapter / scrape caches | Postgres columns or per-run in-memory maps |
 

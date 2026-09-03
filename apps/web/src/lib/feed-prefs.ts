@@ -22,14 +22,16 @@ export type { FeedArea, FeedCity, FeedTopic };
 const KEY = "bored:feed";
 const VIEW_KEY = "bored:feedView";
 
-export const FEED_VIEWS = ["cards", "large", "poster", "by_time"] as const;
+export const FEED_VIEWS = ["large", "poster", "by_time", "reels"] as const;
 export type FeedView = (typeof FEED_VIEWS)[number];
 
 export function parseFeedView(value: string | null | undefined): FeedView {
   if (value === "list") return "by_time";
+  // Legacy "Standard cards" → Larger (Luma-style timeline default).
+  if (value === "cards") return "large";
   return FEED_VIEWS.includes(value as FeedView)
     ? (value as FeedView)
-    : "cards";
+    : "large";
 }
 
 export function rememberFeedView(view: FeedView) {
@@ -44,7 +46,7 @@ export function readFeedView(): FeedView {
   try {
     return parseFeedView(sessionStorage.getItem(VIEW_KEY));
   } catch {
-    return "cards";
+    return "large";
   }
 }
 

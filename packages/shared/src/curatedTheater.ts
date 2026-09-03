@@ -1,0 +1,296 @@
+/**
+ * Curated evergreen theater per metro — Broadway tours, resident musicals,
+ * and flagship local stages. Ingest materializes one stable row per entry.
+ */
+
+import type { CuratedTheaterPick } from "./theaterTips.js";
+
+export type { CuratedTheaterPick, TheaterShowKind } from "./theaterTips.js";
+
+/** SF / Bay — BroadwaySF houses + resident companies */
+export const CURATED_THEATER_SF: CuratedTheaterPick[] = [
+  {
+    id: "sf-hamilton-orpheum",
+    city: "sf",
+    title: "Hamilton",
+    description:
+      "Lin-Manuel Miranda's blockbuster musical on tour at the Orpheum — book early for prime orchestra seats or try the digital lottery.",
+    venueName: "Orpheum Theatre",
+    neighborhood: "Civic Center",
+    address: "1192 Market St, San Francisco, CA",
+    lat: 37.7793,
+    lng: -122.4145,
+    url: "https://www.broadwaysf.com/",
+    showKind: "broadway",
+    tags: ["hamilton", "broadway", "musical", "touring"],
+  },
+  {
+    id: "sf-lion-king-golden-gate",
+    city: "sf",
+    title: "The Lion King",
+    description:
+      "Disney's puppet-forward spectacle fills the Golden Gate Theatre whenever the tour lands — a reliable family night out.",
+    venueName: "Golden Gate Theatre",
+    neighborhood: "Tenderloin",
+    address: "1 Taylor St, San Francisco, CA",
+    lat: 37.7822,
+    lng: -122.4108,
+    url: "https://www.broadwaysf.com/",
+    showKind: "musical",
+    tags: ["disney", "broadway", "family", "touring"],
+  },
+  {
+    id: "sf-act-geary",
+    city: "sf",
+    title: "ACT mainstage season",
+    description:
+      "American Conservatory Theater's Geary Theater programs bold revivals and new plays — check the season for the current headline show.",
+    venueName: "ACT's Geary Theater",
+    neighborhood: "Union Square",
+    address: "415 Geary St, San Francisco, CA",
+    lat: 37.787,
+    lng: -122.4107,
+    url: "https://www.act-sf.org/",
+    showKind: "play",
+    tags: ["act", "drama", "local"],
+  },
+  {
+    id: "sf-berkeley-rep",
+    city: "berkeley",
+    title: "Berkeley Rep",
+    description:
+      "Tony-winning East Bay company premiering new plays and musicals before they move on — pair with a pre-show dinner on Addison.",
+    venueName: "Berkeley Repertory Theatre",
+    neighborhood: "Downtown Berkeley",
+    address: "2025 Addison St, Berkeley, CA",
+    lat: 37.8716,
+    lng: -122.2697,
+    url: "https://www.berkeleyrep.org/",
+    showKind: "play",
+    tags: ["berkeley", "premiere", "local"],
+  },
+  {
+    id: "sf-playhouse",
+    city: "sf",
+    title: "SF Playhouse",
+    description:
+      "Intimate Post Street house for musicals and dramas you won't see on the big touring circuit — strong casts, tight staging.",
+    venueName: "SF Playhouse",
+    neighborhood: "Union Square",
+    address: "450 Post St, San Francisco, CA",
+    lat: 37.7886,
+    lng: -122.4094,
+    url: "https://www.sfplayhouse.org/",
+    showKind: "venue",
+    tags: ["intimate", "musical", "local"],
+  },
+  {
+    id: "sf-curran",
+    city: "sf",
+    title: "Curran Theatre",
+    description:
+      "BroadwaySF's Curran hosts big pre-Broadway tryouts and touring hits — watch for opening weeks when cast Q&As pop up.",
+    venueName: "Curran Theatre",
+    neighborhood: "Union Square",
+    address: "445 Geary St, San Francisco, CA",
+    lat: 37.7869,
+    lng: -122.4101,
+    url: "https://www.broadwaysf.com/",
+    showKind: "broadway",
+    tags: ["broadwaysf", "touring", "premiere"],
+  },
+];
+
+/** Chicago — resident musical + flagship houses */
+export const CURATED_THEATER_CHI: CuratedTheaterPick[] = [
+  {
+    id: "chi-chicago-musical",
+    city: "chicago",
+    title: "Chicago",
+    description:
+      "The razzle-dazzle Kander & Ebb classic runs year-round at the Ambassador — the definitive Chicago theater experience.",
+    venueName: "Ambassador Theatre",
+    neighborhood: "Loop",
+    address: "219 S Wabash Ave, Chicago, IL",
+    lat: 41.8819,
+    lng: -87.6271,
+    url: "https://www.broadwayinchicago.com/",
+    showKind: "musical",
+    tags: ["chicago", "resident", "jazz"],
+  },
+  {
+    id: "chi-hamilton-nederlander",
+    city: "chicago",
+    title: "Hamilton",
+    description:
+      "The Chicago sit-down production at the Nederlander (when running) or national tour dates at Broadway in Chicago houses.",
+    venueName: "James M. Nederlander Theatre",
+    neighborhood: "Loop",
+    address: "24 W Randolph St, Chicago, IL",
+    lat: 41.8849,
+    lng: -87.6285,
+    url: "https://www.broadwayinchicago.com/",
+    showKind: "broadway",
+    tags: ["hamilton", "broadway", "musical"],
+  },
+  {
+    id: "chi-goodman",
+    city: "chicago",
+    title: "Goodman Theatre",
+    description:
+      "Loop flagship for new American plays and big-cast revivals — subscribers get first crack at Tony-bound premieres.",
+    venueName: "Goodman Theatre",
+    neighborhood: "Loop",
+    address: "170 N Dearborn St, Chicago, IL",
+    lat: 41.8842,
+    lng: -87.6296,
+    url: "https://www.goodmantheatre.org/",
+    showKind: "play",
+    tags: ["goodman", "premiere", "local"],
+  },
+  {
+    id: "chi-steppenwolf",
+    city: "chicago",
+    title: "Steppenwolf Theatre",
+    description:
+      "Ensemble-driven dramas and star-packed revivals in Lincoln Park — check the upstairs theater for edgier work.",
+    venueName: "Steppenwolf Theatre Company",
+    neighborhood: "Lincoln Park",
+    address: "1650 N Halsted St, Chicago, IL",
+    lat: 41.9117,
+    lng: -87.6489,
+    url: "https://www.steppenwolf.org/",
+    showKind: "play",
+    tags: ["steppenwolf", "ensemble", "local"],
+  },
+  {
+    id: "chi-shakespeare",
+    city: "chicago",
+    title: "Chicago Shakespeare Theater",
+    description:
+      "Navy Pier company mixing Shakespeare, musicals, and family programming with lakefront views before curtain.",
+    venueName: "Chicago Shakespeare Theater",
+    neighborhood: "Navy Pier",
+    address: "800 E Grand Ave, Chicago, IL",
+    lat: 41.8919,
+    lng: -87.6058,
+    url: "https://www.chicagoshakes.com/",
+    showKind: "play",
+    tags: ["shakespeare", "family", "local"],
+  },
+  {
+    id: "chi-broadway-in-chicago",
+    city: "chicago",
+    title: "Broadway in Chicago",
+    description:
+      "Touring Broadway blockbusters rotate through the Cadillac Palace, Nederlander, and CIBC — Wicked and Lion King are Loop staples.",
+    venueName: "Cadillac Palace Theatre",
+    neighborhood: "Loop",
+    address: "151 W Randolph St, Chicago, IL",
+    lat: 41.8846,
+    lng: -87.6325,
+    url: "https://www.broadwayinchicago.com/",
+    showKind: "broadway",
+    tags: ["broadway", "touring", "musical"],
+  },
+];
+
+/** LA — Pantages tours + Center Theatre Group */
+export const CURATED_THEATER_LA: CuratedTheaterPick[] = [
+  {
+    id: "la-wicked-pantages",
+    city: "la",
+    title: "Wicked",
+    description:
+      "Defying gravity at the Hollywood Pantages whenever the tour or sit-down is running — one of LA's longest-loved musicals.",
+    venueName: "Hollywood Pantages Theatre",
+    neighborhood: "Hollywood",
+    address: "6233 Hollywood Blvd, Los Angeles, CA",
+    lat: 34.1017,
+    lng: -118.3262,
+    url: "https://www.broadwayla.org/",
+    showKind: "musical",
+    tags: ["wicked", "broadway", "touring"],
+  },
+  {
+    id: "la-lion-king-pantages",
+    city: "la",
+    title: "The Lion King",
+    description:
+      "The Pantages regularly hosts the national tour — prime Hollywood Blvd location for a big-night musical.",
+    venueName: "Hollywood Pantages Theatre",
+    neighborhood: "Hollywood",
+    address: "6233 Hollywood Blvd, Los Angeles, CA",
+    lat: 34.1017,
+    lng: -118.3262,
+    url: "https://www.broadwayla.org/",
+    showKind: "musical",
+    tags: ["disney", "broadway", "family"],
+  },
+  {
+    id: "la-ahmanson",
+    city: "la",
+    title: "Ahmanson Theatre",
+    description:
+      "Center Theatre Group's Broadway touring home at the Music Center — big casts, touring sets, subscriber rush options.",
+    venueName: "Ahmanson Theatre",
+    neighborhood: "Downtown",
+    address: "135 N Grand Ave, Los Angeles, CA",
+    lat: 34.0554,
+    lng: -118.2486,
+    url: "https://www.centertheatregroup.org/",
+    showKind: "broadway",
+    tags: ["ctg", "touring", "broadway"],
+  },
+  {
+    id: "la-geffen",
+    city: "la",
+    title: "Geffen Playhouse",
+    description:
+      "Westwood nonprofit staging world and West Coast premieres — celebrity casts and tight parking make rideshare easy.",
+    venueName: "Geffen Playhouse",
+    neighborhood: "Westwood",
+    address: "10886 Le Conte Ave, Los Angeles, CA",
+    lat: 34.0615,
+    lng: -118.444,
+    url: "https://geffenplayhouse.org/",
+    showKind: "play",
+    tags: ["geffen", "premiere", "local"],
+  },
+  {
+    id: "la-mark-taper",
+    city: "la",
+    title: "Mark Taper Forum",
+    description:
+      "Intimate CTG house for new plays and musical workshops — often the first look at work headed to New York.",
+    venueName: "Mark Taper Forum",
+    neighborhood: "Downtown",
+    address: "135 N Grand Ave, Los Angeles, CA",
+    lat: 34.0554,
+    lng: -118.2486,
+    url: "https://www.centertheatregroup.org/",
+    showKind: "play",
+    tags: ["ctg", "premiere", "local"],
+  },
+  {
+    id: "la-broadway-tours",
+    city: "la",
+    title: "Broadway touring block",
+    description:
+      "Hollywood Pantages and the Dolby-adjacent houses rotate Hamilton, Hadestown, and other NY hits — check Broadway LA for the current slate.",
+    venueName: "Hollywood Pantages Theatre",
+    neighborhood: "Hollywood",
+    address: "6233 Hollywood Blvd, Los Angeles, CA",
+    lat: 34.1017,
+    lng: -118.3262,
+    url: "https://www.broadwayla.org/",
+    showKind: "broadway",
+    tags: ["broadway", "touring", "musical"],
+  },
+];
+
+export const CURATED_THEATER: readonly CuratedTheaterPick[] = [
+  ...CURATED_THEATER_SF,
+  ...CURATED_THEATER_CHI,
+  ...CURATED_THEATER_LA,
+];

@@ -11,7 +11,18 @@ import {
   ALL_ADAPTER_IDS,
   PHASE1_ADAPTER_IDS,
   STATIC_INGEST_SCHEDULES,
+  getIgTokenStatus,
+  renewIgAccessToken,
+  IG_FEED_CITIES,
+  listIgCreatorsForAdmin,
+  lookupIgCreator,
+  normalizeIgHandle,
+  pruneDeadIgCreators,
+  removeIgCreator,
+  setIgCreatorActive,
+  upsertIgCreator,
 } from "@bored/ingest/meta";
+
 import { INTEREST_CATEGORIES, demotionMetroMatches, eventInArea, FEED_AREAS, type FeedArea } from "@bored/shared";
 import {
   and,
@@ -29,6 +40,7 @@ import {
 } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { fetchRailwayDeploys } from "./railwayDeploys.js";
 
 function adminTokenConfigured(): string | null {
   const t = process.env.ADMIN_TOKEN?.trim();
@@ -171,6 +183,25 @@ adminApp.use("*", async (c, next) => {
 });
 
 adminApp.get("/health", (c) => c.json({ ok: true }));
+
+adminApp.get("/deploys", async (c) => {
+  try {
+    return c.json(await fetchRailwayDeploys());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Railway fetch failed";
+    return c.json({
+      configured: false,
+      error: message,
+      projectId: process.env.RAILWAY_PROJECT_ID?.trim() || null,
+      projectName: null,
+      environmentId: null,
+      environmentName: null,
+      dashboardUrl: "https://railway.com",
+      services: [],
+      recent: [],
+    });
+  }
+});
 
 adminApp.get("/ingest/adapters", async (c) => {
   const recent = await db
@@ -939,4 +970,178 @@ adminApp.get("/stats/outbound", async (c) => {
       n: Number(t.n),
     })),
   });
+});
+
+adminApp.get("/instagram/token", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const status = await getIgTokenStatus();
+  return c.json({ status });
+});
+
+adminApp.post("/instagram/token/renew", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const body = z
+    .object({
+      shortLivedToken: z.string().min(20).max(2048).optional(),
+    })
+    .safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) {
+    return c.json({ error: body.error.flatten() }, 400);
+  }
+  const result = await renewIgAccessToken({
+    shortLivedToken: body.data.shortLivedToken,
+  });
+  if (!result.ok) {
+    return c.json(
+      { error: result.error ?? "Renew failed", status: result.status },
+      400,
+    );
+  }
+  return c.json({ status: result.status, renewed: true });
+});
+
+const IgCreatorBodySchema = z.object({
+  handle: z.string().min(1).max(64),
+  city: z.enum(["sf", "chicago", "la"]),
+  categories: z.array(z.string()).optional(),
+  foodInfluencer: z.boolean().optional(),
+  cityGuide: z.boolean().optional(),
+  localOutlet: z.boolean().optional(),
+  notes: z.string().nullable().optional(),
+  active: z.boolean().optional(),
+  profilePictureUrl: z.string().nullable().optional(),
+});
+
+adminApp.get("/instagram/creators", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const creators = await listIgCreatorsForAdmin();
+  const byCity = Object.fromEntries(
+    IG_FEED_CITIES.map((city) => [
+      city,
+      creators.filter((x) => x.city === city),
+    ]),
+  );
+  return c.json({
+    cities: IG_FEED_CITIES,
+    creators,
+    byCity,
+    totals: {
+      all: creators.length,
+      active: creators.filter((x) => x.active).length,
+      admin: creators.filter((x) => x.source === "admin").length,
+    },
+  });
+});
+
+adminApp.get("/instagram/creators/lookup", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const handle = c.req.query("handle")?.trim() ?? "";
+  if (!handle) return c.json({ error: "handle required" }, 400);
+  const result = await lookupIgCreator(handle);
+  if (!result.ok) return c.json({ error: result.error }, 404);
+  return c.json({ profile: result.profile });
+});
+
+adminApp.post("/instagram/creators", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const parsed = IgCreatorBodySchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  try {
+    const creator = await upsertIgCreator(parsed.data);
+    return c.json({ creator }, 201);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "Save failed" },
+      400,
+    );
+  }
+});
+
+adminApp.patch("/instagram/creators/:handle", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const handle = normalizeIgHandle(c.req.param("handle"));
+  const body = z
+    .object({
+      active: z.boolean().optional(),
+      city: z.enum(["sf", "chicago", "la"]).optional(),
+      foodInfluencer: z.boolean().optional(),
+      cityGuide: z.boolean().optional(),
+      localOutlet: z.boolean().optional(),
+      notes: z.string().nullable().optional(),
+      categories: z.array(z.string()).optional(),
+    })
+    .safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: body.error.flatten() }, 400);
+
+  try {
+    if (body.data.active != null && Object.keys(body.data).length === 1) {
+      const creator = await setIgCreatorActive(handle, body.data.active);
+      return c.json({ creator });
+    }
+    const list = await listIgCreatorsForAdmin();
+    const existing = list.find((x) => x.handle === handle);
+    if (!existing) return c.json({ error: "Not found" }, 404);
+    const creator = await upsertIgCreator({
+      handle,
+      city: body.data.city ?? existing.city,
+      categories: body.data.categories ?? existing.categories,
+      foodInfluencer: body.data.foodInfluencer ?? existing.foodInfluencer,
+      cityGuide: body.data.cityGuide ?? existing.cityGuide,
+      localOutlet: body.data.localOutlet ?? existing.localOutlet,
+      notes:
+        body.data.notes !== undefined ? body.data.notes : existing.notes,
+      active: body.data.active ?? existing.active,
+    });
+    return c.json({ creator });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "Update failed" },
+      400,
+    );
+  }
+});
+
+adminApp.delete("/instagram/creators/:handle", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const handle = normalizeIgHandle(c.req.param("handle"));
+  try {
+    await removeIgCreator(handle);
+    return c.body(null, 204);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "Remove failed" },
+      400,
+    );
+  }
+});
+
+adminApp.post("/instagram/creators/prune-dead", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const body = z
+    .object({
+      onlyFailedScrapes: z.boolean().optional(),
+    })
+    .safeParse((await c.req.json().catch(() => ({}))) ?? {});
+  if (!body.success) return c.json({ error: body.error.flatten() }, 400);
+  try {
+    const result = await pruneDeadIgCreators({
+      onlyFailedScrapes: body.data.onlyFailedScrapes,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "Prune failed" },
+      400,
+    );
+  }
 });

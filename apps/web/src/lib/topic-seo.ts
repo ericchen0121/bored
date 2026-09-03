@@ -33,6 +33,7 @@ function topicHubIntro(city: FeedCity, topic: FeedTopic): string {
 
   const intros: Record<FeedTopic, string> = {
     concerts: `Upcoming live music, DJ sets, and concerts in ${cityLabel} — aggregated from local calendars and ticket platforms.`,
+    music_festivals: `Music festivals, multi-day concert weekends, and ticketed fest lineups in ${cityLabel}.`,
     comedy: `Stand-up, showcases, open mics, and comedy clubs in ${cityLabel} — club headliners plus recurring rooms.`,
     movies: `Movies playing in ${cityLabel} with showtimes, ratings, and ticket links.`,
     sports: `Games and sports events in ${cityLabel}.`,
@@ -42,6 +43,7 @@ function topicHubIntro(city: FeedCity, topic: FeedTopic): string {
     food: `Restaurant tips, new openings, and where to eat in ${cityLabel}.`,
     nightlife: `Bars, clubs, and late-night events in ${cityLabel}.`,
     arts: `Arts, culture, museums, and gallery events in ${cityLabel}.`,
+    theater: `Broadway tours, musicals, plays, and live stage in ${cityLabel} — flagship houses plus touring hits.`,
     activities: `Evergreen things to do in ${cityLabel} — parks, hikes, neighborhoods, and local gems.`,
   };
 

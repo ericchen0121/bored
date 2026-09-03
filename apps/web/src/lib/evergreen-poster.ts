@@ -2,9 +2,11 @@ import {
   activityTipFallbackLabel,
   foodTipFallbackLabel,
   isActivityRecommendationSource,
+  isTheaterRecommendationSource,
   isFoodRecommendationSource,
   isNewRestaurantRecommendationSource,
   newRestaurantTipFallbackLabel,
+  theaterTipFallbackLabel,
   primaryEventType,
   type FeedCard,
 } from "@bored/shared";
@@ -24,6 +26,9 @@ export function posterPlaceholderLabel(
   const source = card.source ?? "";
   if (isActivityRecommendationSource(source)) {
     return card.recommendationLabel?.trim() || "Things to do";
+  }
+  if (isTheaterRecommendationSource(source)) {
+    return theaterTipFallbackLabel(card.recommendationLabel);
   }
   if (isNewRestaurantRecommendationSource(source)) {
     return newRestaurantTipFallbackLabel(card.recommendationLabel);

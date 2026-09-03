@@ -8,6 +8,8 @@ const MAX_ENTRIES = 50;
 type CacheEntry = { at: number; cards: FeedCard[] };
 const store = new Map<string, CacheEntry>();
 
+export type FeedVideosMode = "include" | "exclude" | "only";
+
 export function feedRequestCacheKey(params: URLSearchParams): string {
   const parts: string[] = [];
   for (const key of [...params.keys()].sort()) {
@@ -26,6 +28,14 @@ export function peekFeedCache(params: URLSearchParams): FeedCard[] | null {
   return hit.cards;
 }
 
+function putFeedCache(key: string, cards: FeedCard[]): void {
+  if (store.size >= MAX_ENTRIES) {
+    const oldest = store.keys().next().value;
+    if (oldest) store.delete(oldest);
+  }
+  store.set(key, { at: Date.now(), cards });
+}
+
 export async function fetchFeedCached(
   params: URLSearchParams,
   opts?: { force?: boolean },
@@ -40,10 +50,25 @@ export async function fetchFeedCached(
   const data = await api<{ cards: FeedCard[] }>(
     `/v1/feed?${params.toString()}`,
   );
-  if (store.size >= MAX_ENTRIES) {
-    const oldest = store.keys().next().value;
-    if (oldest) store.delete(oldest);
-  }
-  store.set(key, { at: Date.now(), cards: data.cards });
+  putFeedCache(key, data.cards);
   return data;
+}
+
+/** Clone params with an explicit progressive `videos=` mode. */
+export function feedParamsWithVideos(
+  base: URLSearchParams,
+  videos: FeedVideosMode,
+): URLSearchParams {
+  const next = new URLSearchParams(base);
+  next.set("videos", videos);
+  return next;
+}
+
+/** Unfiltered All params (same mode/area/date/limit/sources, no topics). */
+export function feedParamsWithoutTopics(
+  base: URLSearchParams,
+): URLSearchParams {
+  const next = new URLSearchParams(base);
+  next.delete("topics");
+  return next;
 }

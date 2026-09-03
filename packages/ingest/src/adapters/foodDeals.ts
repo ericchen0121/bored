@@ -2,6 +2,7 @@ import {
   CHI_DEFAULT,
   LA_DEFAULT,
   CURATED_FOOD_DEALS,
+  curatedFoodDealImageUrl,
   SF_DEFAULT,
   nextFoodDealOccurrence,
   type CuratedFoodDeal,
@@ -59,6 +60,12 @@ export function materializeDeal(
 
   const timezone = timezoneForCity(deal.city);
   const sourceEventId = foodDealSourceEventId(deal.id);
+  const imageUrl = curatedFoodDealImageUrl({
+    dealId: deal.id,
+    title: deal.title,
+    dealSummary: `${deal.dealSummary} ${deal.description}`,
+    dealKind: deal.dealKind,
+  });
 
   return {
     source: "food_deals",
@@ -80,6 +87,7 @@ export function materializeDeal(
     categories: ["food"],
     tags: ["food_deal", deal.dealKind, ...deal.sources],
     url: deal.url ?? null,
+    imageUrl,
     organizer: deal.sources.map((s) => s.replace(/_/g, " ")).join(", "),
     rawPayload: {
       dealId: deal.id,
@@ -88,6 +96,7 @@ export function materializeDeal(
       sources: deal.sources,
       rating: deal.rating ?? null,
       schedule: deal.schedule,
+      imageSource: "curated",
     },
   };
 }

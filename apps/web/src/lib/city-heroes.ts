@@ -123,5 +123,5 @@ export function cityHeroLede(city: FeedCity, area?: FeedArea): string {
   if (city === "la" || area === "la") {
     return "Hillside sunsets, taco trucks, and rooms that run late in Hollywood.";
   }
-  return "Foghorn nights, Mission dance floors, and comedy that runs late.";
+  return "Foghorn nights, Mission dance floors, and sold-out standup rooms.";
 }

@@ -14,6 +14,7 @@ export const MESH_PALETTES: Record<EventTypeKind, MeshPalette> = {
   tech: ["#4dd0e1", "#26c6da", "#00838f"],
   food: ["#ff8a65", "#ff7043", "#bf360c"],
   arts: ["#f48fb1", "#ec407a", "#880e4f"],
+  theater: ["#ce93d8", "#ab47bc", "#4a148c"],
   outdoors: ["#81c784", "#66bb6a", "#1b5e20"],
   nightlife: ["#7986cb", "#5c6bc0", "#1a237e"],
   family: ["#ffd54f", "#ffca28", "#f57f17"],

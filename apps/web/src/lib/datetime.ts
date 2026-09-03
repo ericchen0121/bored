@@ -53,8 +53,12 @@ export function formatDayHeading(
 ): string {
   const key = sharedDayKey(iso, timeZone);
   const today = sharedDayKey(now, timeZone);
-  if (key === today) return "Today";
-  if (key === addCalendarDays(today, 1)) return "Tomorrow";
+  const weekdayLong = new Date(iso).toLocaleDateString("en-US", {
+    timeZone,
+    weekday: "long",
+  });
+  if (key === today) return `Today ${weekdayLong}`;
+  if (key === addCalendarDays(today, 1)) return `Tomorrow ${weekdayLong}`;
 
   return new Date(iso).toLocaleDateString("en-US", {
     timeZone,

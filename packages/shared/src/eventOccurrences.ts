@@ -1,7 +1,27 @@
 import { dayKey } from "./datetime";
 
+/**
+ * Ticketmaster (and some calendars) append age gates to the show title.
+ * Strip before dedupe so "Roni Size" and "Roni Size (21 and Over)" group.
+ */
+const AGE_GATE_SUFFIX =
+  /\s*[(\[]?\s*(?:\d{1,2}\s*(?:\+|plus|(?:and|&)\s*over)|all\s*ages)\s*[)\]]?\s*$/i;
+
+export function stripTicketTitleNoise(title: string): string {
+  let t = title.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = t.replace(AGE_GATE_SUFFIX, "").trim();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
 export function normalizeOccurrenceLabel(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return stripTicketTitleNoise(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 /** City parentheticals / suffixes 19hz appends — strip before grouping. */

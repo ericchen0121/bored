@@ -1,5 +1,8 @@
 import * as cheerio from "cheerio";
-import { decodeHtmlEntities } from "@bored/shared";
+import {
+  decodeHtmlEntities,
+  isCuratedFoodDealPlaceholderImage,
+} from "@bored/shared";
 import { enrichInfatuationEvent } from "./food.js";
 import { fetchGooglePlacePhoto } from "./googlePlacePhoto.js";
 import { fetchText, type NormalizedEvent } from "../types.js";
@@ -102,7 +105,7 @@ export function needsFoodEditorialEnrich(row: FoodDetailRow): boolean {
 
   return (
     !payload.author ||
-    !row.imageUrl ||
+    isCuratedFoodDealPlaceholderImage(row.imageUrl) ||
     !row.description ||
     row.description.length < 200
   );
@@ -308,7 +311,11 @@ export async function enrichFoodEventDetail(
     if (fresh) {
       patch = {
         description: fresh.description ?? row.description,
-        imageUrl: fresh.imageUrl ?? row.imageUrl,
+        imageUrl: fresh.imageUrl
+          ? fresh.imageUrl
+          : isCuratedFoodDealPlaceholderImage(row.imageUrl)
+            ? null
+            : (row.imageUrl ?? null),
         venueName: preserveDealFields
           ? (row.venueName ?? fresh.venueName)
           : (fresh.venueName ?? row.venueName),
@@ -352,7 +359,7 @@ export async function enrichFoodEventDetail(
   }
 
   const imageAfter = patch.imageUrl ?? row.imageUrl ?? null;
-  if (!imageAfter) {
+  if (isCuratedFoodDealPlaceholderImage(imageAfter)) {
     const googlePhoto = await fetchGooglePlacePhoto({
       venueName: patch.venueName ?? row.venueName,
       address: patch.address ?? row.address,
@@ -365,6 +372,9 @@ export async function enrichFoodEventDetail(
         photoSource: "google_maps",
         enrichedAt: new Date().toISOString(),
       };
+    } else if (!patch.imageUrl && row.imageUrl) {
+      // Keep curated Unsplash if Google has nothing.
+      patch.imageUrl = row.imageUrl;
     }
   }
 
