@@ -284,8 +284,8 @@ function CityFeedCity({ city }: { city: FeedCity }) {
 
       const effectiveDate =
         mode === "today" ? (date ?? dayKey(new Date(), timeZone)) : date;
-      const limit =
-        mode === "date" || effectiveDate || sources.length ? 200 : 40;
+      // Narrowed to today | for_you above — date-mode bump doesn't apply.
+      const limit = effectiveDate || sources.length ? 200 : 40;
       const params = new URLSearchParams({
         mode,
         area,
