@@ -113,7 +113,8 @@ export const youtubeAdapter: SourceAdapter = {
         if (!videoIds.length) continue;
 
         const detailsParams = new URLSearchParams({
-          part: "contentDetails,snippet",
+          // status.embeddable — skip shorts that only play on youtube.com
+          part: "contentDetails,snippet,status",
           id: videoIds.join(","),
           key,
         });
@@ -126,27 +127,37 @@ export const youtubeAdapter: SourceAdapter = {
                 id: string;
                 contentDetails?: { duration?: string };
                 snippet?: YtSearchItem["snippet"];
+                status?: { embeddable?: boolean; privacyStatus?: string };
               }[];
             })
           : { items: [] };
 
-        const durationById = new Map(
-          (detailsData.items ?? []).map((v) => [
-            v.id,
-            parseIsoDuration(v.contentDetails?.duration ?? ""),
-          ]),
+        const detailsById = new Map(
+          (detailsData.items ?? []).map((v) => [v.id, v]),
         );
 
         for (const item of items) {
           const videoId = item.id?.videoId;
           if (!videoId) continue;
 
+          const details = detailsById.get(videoId);
+          // Owner disabled embedding → iframe shows "Video unavailable / Watch on YouTube".
+          if (details?.status?.embeddable === false) continue;
+          if (
+            details?.status?.privacyStatus &&
+            details.status.privacyStatus !== "public"
+          ) {
+            continue;
+          }
+
           const title = item.snippet?.title ?? "";
           const description = item.snippet?.description ?? "";
           const blob = videoLocalityText([title, description, ch.handle]);
           if (!blob.trim()) continue;
 
-          const durationSec = durationById.get(videoId) ?? 0;
+          const durationSec = parseIsoDuration(
+            details?.contentDetails?.duration ?? "",
+          );
           const isShort = durationSec > 0 && durationSec <= 90;
           if (!isShort && durationSec > 90) continue;
 

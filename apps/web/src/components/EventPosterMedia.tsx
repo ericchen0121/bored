@@ -56,6 +56,14 @@ export function TypeIcon({ kind }: { kind: EventTypeKind }) {
           <path d="M12 16v4" />
         </svg>
       );
+    case "business":
+      return (
+        <svg {...common}>
+          <rect x="4" y="7" width="16" height="13" rx="1.5" />
+          <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+          <path d="M4 12h16" />
+        </svg>
+      );
     case "food":
       return (
         <svg {...common}>
@@ -80,6 +88,12 @@ export function TypeIcon({ kind }: { kind: EventTypeKind }) {
         <svg {...common}>
           <path d="M3 19h18" />
           <path d="M5 19l5.5-11 3 6 2-3.5L19 19" />
+        </svg>
+      );
+    case "wellness":
+      return (
+        <svg {...common}>
+          <path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 11c0 5.6-7 10-7 10z" />
         </svg>
       );
     case "nightlife":

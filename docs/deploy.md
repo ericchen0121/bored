@@ -60,6 +60,8 @@ All three app services build from the **repo root** `Dockerfile`.
 | `YOUTUBE_API_KEY` | ingest-* | Optional |
 | `GOOGLE_MAPS_API_KEY` | ingest-* | Optional hero photos |
 | `IG_ACCESS_TOKEN` / `IG_BUSINESS_USER_ID` | ingest-* | Optional |
+| `OPENAI_API_KEY` | ingest-* | Optional — weak-event LLM taxonomy (default model `gpt-4.1-nano`) |
+| `LLM_TAXONOMY` / `OPENAI_TAXONOMY_MODEL` | ingest-* | Optional — `LLM_TAXONOMY=0` disables; see [ingest.md](./ingest.md#weak-event-llm-taxonomy) |
 | `BROWSER_IMAGE_SCRAPE` | ingest-* | `0` until Chromium installed (`INSTALL_PLAYWRIGHT=1`) |
 | `NEXT_PUBLIC_API_URL` | web (**build**) | Public API URL, e.g. `https://api-….up.railway.app` |
 | `NEXT_PUBLIC_SITE_URL` | web (**build**) | **Required in production.** Public web origin for canonical URLs, JSON-LD, OG/share cards, sitemap, and `llms.txt` (e.g. `https://bored-app.up.railway.app`) |

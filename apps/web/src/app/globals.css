@@ -1626,6 +1626,11 @@ select {
   background: linear-gradient(160deg, rgba(61, 142, 165, 0.35), rgba(16, 24, 32, 0.92));
 }
 
+.poster.placeholder.type-business {
+  color: #90caf9;
+  background: linear-gradient(160deg, rgba(66, 165, 245, 0.28), rgba(16, 24, 32, 0.92));
+}
+
 .poster.placeholder.type-food {
   color: #e8a07a;
   background: linear-gradient(160deg, rgba(217, 107, 76, 0.28), rgba(16, 24, 32, 0.92));
@@ -1639,6 +1644,11 @@ select {
 .poster.placeholder.type-outdoors {
   color: #8fbf9a;
   background: linear-gradient(160deg, rgba(80, 140, 100, 0.32), rgba(16, 24, 32, 0.92));
+}
+
+.poster.placeholder.type-wellness {
+  color: #a5d6a7;
+  background: linear-gradient(160deg, rgba(102, 187, 106, 0.28), rgba(16, 24, 32, 0.92));
 }
 
 .poster.placeholder.type-nightlife {
@@ -1696,6 +1706,11 @@ select {
   color: #b8e0ef;
 }
 
+.badge.type.type-business {
+  background: rgba(66, 165, 245, 0.25);
+  color: #bbdefb;
+}
+
 .badge.type.type-food {
   background: rgba(217, 107, 76, 0.25);
   color: #f0c4b0;
@@ -1709,6 +1724,11 @@ select {
 .badge.type.type-outdoors {
   background: rgba(80, 140, 100, 0.28);
   color: #c0e0c8;
+}
+
+.badge.type.type-wellness {
+  background: rgba(102, 187, 106, 0.25);
+  color: #c8e6c9;
 }
 
 .badge.type.type-nightlife {
@@ -5372,6 +5392,12 @@ select {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+  }
+
+  /* Poster cards stay a single vertical stack — 2 cols reads as duplicate rows. */
+  .feed-layout .feed-grid--poster,
+  .saved-page .feed-grid--poster {
+    grid-template-columns: 1fr;
   }
 
   .feed-layout .feed-grid .card,

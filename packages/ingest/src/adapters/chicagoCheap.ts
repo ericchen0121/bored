@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
-import { decodeHtmlEntities, fromZonedTime } from "@bored/shared";
+import { decodeHtmlEntities, fromZonedTime, textMentionsComedy } from "@bored/shared";
 import {
   contentHash,
   fetchText,
@@ -310,7 +310,7 @@ function categoriesFromText(
 ): string[] {
   const text = `${title} ${body} ${venue}`.toLowerCase();
   const cats = new Set<string>(["free"]);
-  if (/comedy|standup|stand-up|improv/i.test(text)) cats.add("comedy.showcase");
+  if (textMentionsComedy(text)) cats.add("comedy.showcase");
   if (/concert|dj|live music|jazz|band|music/i.test(text)) cats.add("music.live");
   if (/art|gallery|museum|exhibit|cultural center/i.test(text)) cats.add("arts");
   if (/food|dinner|taste|market|taco|dumpling|happy hour|restaurant/i.test(text))

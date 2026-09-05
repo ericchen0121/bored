@@ -4,6 +4,7 @@ import {
   isExhibitionCandidate,
   parseDiscoverLaScheduleLine,
   parseWallClockIso,
+  textMentionsComedy,
 } from "@bored/shared";
 import {
   contentHash,
@@ -102,7 +103,7 @@ export function mapDoStuffCategories(
   const t = (title ?? "").toLowerCase();
   const blob = `${c} ${t}`;
 
-  if (/comedic|comedy|standup|stand-up|improv|open mic/i.test(blob)) {
+  if (textMentionsComedy(blob)) {
     return ["comedy.showcase"];
   }
   if (/film|movie|cinema|television|matinee/i.test(blob)) return ["movies"];

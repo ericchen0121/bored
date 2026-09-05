@@ -7,6 +7,10 @@ import {
 import { and, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import type { NormalizedEvent, NormalizedShowtimeBatch, SourceAdapter } from "./types.js";
 import { eventContentHash } from "./types.js";
+import {
+  enrichWeakEventsWithLlmTaxonomy,
+  llmAwareRawPayloadSql,
+} from "./llmTaxonomy.js";
 import { nineteenHzAdapter, nineteenHzChicagoAdapter, nineteenHzLaAdapter } from "./adapters/nineteenHz.js";
 import { funcheapAdapter } from "./adapters/funcheap.js";
 import { lumaAdapter, lumaChicagoAdapter, lumaLaAdapter } from "./adapters/luma.js";
@@ -442,8 +446,9 @@ const SHOWTIME_UPSERT_CHUNK = 100;
 
 export async function upsertEvents(list: NormalizedEvent[]): Promise<number> {
   if (!list.length) return 0;
+  const enriched = await enrichWeakEventsWithLlmTaxonomy(list);
   const now = new Date();
-  const rows = list.map((ev) => ({
+  const rows = enriched.map((ev) => ({
     source: ev.source,
     sourceEventId: ev.sourceEventId,
     kind: resolveEventKind({
@@ -531,13 +536,14 @@ export async function upsertEvents(list: NormalizedEvent[]): Promise<number> {
           registrationStatus: sql`excluded.registration_status`,
           registrationCheckedAt: sql`excluded.registration_checked_at`,
           // Merge listing + prior detail enrichment (sourcePageUrl, eventDetailsUrl, …).
-          rawPayload: sql`coalesce(excluded.raw_payload, '{}'::jsonb) || coalesce(${events.rawPayload}, '{}'::jsonb)`,
+          // Prefer excluded.llmTaxonomy so weak-event classification cache sticks.
+          rawPayload: llmAwareRawPayloadSql(),
           contentHash: sql`excluded.content_hash`,
           lastSeenAt: sql`excluded.last_seen_at`,
         },
       });
   }
-  return list.length;
+  return enriched.length;
 }
 
 export async function upsertShowtimes(

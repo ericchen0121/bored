@@ -21,6 +21,7 @@ import {
   CURATED_ONLY_TIMED_SOURCES,
   enrichCategoriesWithTags,
   eventInArea,
+  feedCityPrefilter,
   eventTimesPreview,
   FEED_TIMES_PREVIEW_LIMIT,
   exhibitionScheduleFromPayload,
@@ -98,7 +99,7 @@ import {
 
 import { coalesceEventOccurrences } from "@bored/shared/coalesce";
 import { config } from "dotenv";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
@@ -773,6 +774,8 @@ app.get("/v1/events/:id", async (c) => {
         funcheapPage &&
         (funcheapDescriptionNeedsEnrich(row.description) ||
           !row.imageUrl ||
+          !row.venueName?.trim() ||
+          !row.address?.trim() ||
           sparseCategories ||
           !(row.tags as string[])?.some((t) => t !== "funcheap" && t !== "rss"));
       if (needsEnrich) {
@@ -2144,6 +2147,17 @@ app.get("/v1/feed", async (c) => {
       )
     : null;
 
+  // Scope the timed LIMIT to this metro — otherwise Chicago/LA daytime rows
+  // exhaust fetchLimit and Bay evening 19hz / RA never enter All/Concerts.
+  const cityPrefilter = feedCityPrefilter(query.area);
+  const cityInArea = cityPrefilter.keepUnknown
+    ? or(
+        isNull(events.city),
+        eq(events.city, ""),
+        inArray(events.city, cityPrefilter.include),
+      )
+    : inArray(events.city, cityPrefilter.include);
+
   const [timedRows, otherCuratedRaw, videoCuratedRaw, demotionRows] =
     await Promise.all([
     needsTimedQuery
@@ -2157,6 +2171,7 @@ app.get("/v1/feed", async (c) => {
               notInArray(events.source, [...CURATED_ONLY_TIMED_SOURCES]),
               // Evergreen tips use kind=recommendation (also excluded by source).
               sql`${events.kind} <> 'recommendation'`,
+              cityInArea,
               // Default Today: IG/YT come from the capped video query — don't let
               // hundreds of IMAGE/CAROUSEL posts crowd the timed event limit.
               !browsingVideoSource

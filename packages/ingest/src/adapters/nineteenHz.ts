@@ -3,6 +3,7 @@ import { db, events as eventsTable } from "@bored/db";
 import {
   enrichCategoriesWithTags,
   extractMusicPlatformRef,
+  inferBayCityFromText,
   MUSIC_TICKET_PLATFORMS,
   parseLineupArtists,
   type MusicTicketPlatform,
@@ -213,11 +214,7 @@ export async function enrichNineteenHzEventImage(
 }
 
 function inferBayCity(venue: string): string {
-  const v = venue.toLowerCase();
-  if (v.includes("oakland")) return "oakland";
-  if (v.includes("berkeley")) return "berkeley";
-  if (v.includes("san jose") || v.includes("sj ")) return "san_jose";
-  return "sf";
+  return inferBayCityFromText(venue, "sf");
 }
 
 function inferChicagoCity(venue: string): string {

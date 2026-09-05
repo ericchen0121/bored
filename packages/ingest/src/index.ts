@@ -12,6 +12,8 @@ export {
   enrichEventbriteListing,
   funcheapDescriptionNeedsEnrich,
   resolveFuncheapSourcePageUrl,
+  parseFuncheapStatsLocation,
+  parseEventbriteJsonLdLocation,
   type FuncheapEnrichment,
   type EventbriteEnrichment,
 } from "./adapters/funcheap.js";

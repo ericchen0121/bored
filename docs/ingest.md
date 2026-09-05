@@ -39,7 +39,20 @@ pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-ticket-images --limit
 
 # Install Chromium once on the ingest host (required for browser fallback)
 pnpm --filter @bored/ingest exec playwright install chromium
+
+# Classify upcoming weak-taxonomy rows (needs OPENAI_API_KEY)
+pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-llm-taxonomy --limit=200
+pnpm --filter @bored/ingest exec tsx src/cli.ts --backfill-llm-taxonomy --dry-run --limit=20
 ```
+
+### Weak-event LLM taxonomy
+
+When adapter heuristics leave an event with **no strong interest category** (only `free` / `nightlife` / empty), ingest can call a cheap OpenAI chat model (default **`gpt-4.1-nano`**) to pick 1–3 `InterestCategory` ids + optional display tags.
+
+- Gate: `isWeakEventTaxonomy` in `@bored/shared`
+- Cache: `rawPayload.llmTaxonomy` keyed by title/venue/desc hash — re-ingest does not re-bill
+- Env: `OPENAI_API_KEY` (required), `LLM_TAXONOMY=0` to disable, `OPENAI_TAXONOMY_MODEL`, `LLM_TAXONOMY_CONCURRENCY`
+- Set the key on **ingest-*** Railway services (not web)
 
 ## Adapter inventory
 

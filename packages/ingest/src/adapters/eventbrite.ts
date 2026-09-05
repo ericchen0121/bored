@@ -1,4 +1,4 @@
-import { cityKeyFromLabel, fromZonedTime } from "@bored/shared";
+import { cityKeyFromLabel, fromZonedTime, textMentionsComedy } from "@bored/shared";
 import {
   fetchText,
   type NormalizedEvent,
@@ -171,7 +171,7 @@ function mapEbCategories(
     } else categories.add("nightlife");
   }
 
-  if (/comedy|standup|stand-up|improv/i.test(text)) categories.add("comedy.showcase");
+  if (textMentionsComedy(text)) categories.add("comedy.showcase");
   if (/concert|live music|dj\b|band\b/i.test(text) && !categories.has("comedy.showcase")) {
     categories.add("music.live");
   }

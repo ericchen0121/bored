@@ -1,7 +1,9 @@
 import * as cheerio from "cheerio";
 import {
   decodeHtmlEntities,
+  inferBayCityFromText,
   stripHtmlToText,
+  textMentionsComedy,
   unwrapFuncheapLazyImageUrl,
   upgradeFuncheapImageUrl,
 } from "@bored/shared";
@@ -265,8 +267,7 @@ export function funcheapTaxonomy(
   const tags = new Set<string>(["funcheap"]);
 
   const hasComedy =
-    slugSet.has("comedy-event-types-event") ||
-    /comedy|standup|stand-up|stand up|improv/i.test(text);
+    slugSet.has("comedy-event-types-event") || textMentionsComedy(text);
   const hasGames =
     slugSet.has("fun-games") ||
     slugSet.has("geek-event") ||
@@ -278,12 +279,18 @@ export function funcheapTaxonomy(
   const hasLiveMusic =
     slugSet.has("live-music-event") || slugSet.has("club-dj");
   const hasTheater = slugSet.has("theater-performance");
-  const hasOutdoors = slugSet.has("outdoors");
-  const hasSports = slugSet.has("sports-fitness");
+  const hasOutdoorsSlug = slugSet.has("outdoors");
+  const hasWellness =
+    /\b(yoga|pilates|fitness|workout|zumba|tai\s*chi|wellness|meditation)\b/i.test(
+      text,
+    );
+  const hasSports =
+    slugSet.has("sports-fitness") ||
+    /\b(marathon|5k|10k|basketball|baseball|soccer|tournament)\b/i.test(text);
   const hasLecture =
     slugSet.has("lectures-workshops") ||
     /\b(lecture|panel discussion)\b/i.test(text) ||
-    (/\b(talk|workshop)\b/i.test(text) && !hasSports);
+    (/\b(talk|workshop)\b/i.test(text) && !hasSports && !hasWellness);
   const hasPolitics =
     slugSet.has("political-activism") || /politic/i.test(text);
   const hasFoodSlug = slugSet.has("eating-drinking");
@@ -297,6 +304,10 @@ export function funcheapTaxonomy(
     );
   const hasTechTitle =
     /\b(ai |agents?|startup|developer|hackathon|tech |builders? night)\b/i.test(
+      text,
+    );
+  const hasBusinessTitle =
+    /\b(conference|symposium|networking|mixer|seminar|small business)\b/i.test(
       text,
     );
 
@@ -314,7 +325,10 @@ export function funcheapTaxonomy(
     tags.add("night market");
   }
   if (hasPolitics) tags.add("politics");
-  if (hasLecture) {
+  if (hasBusinessTitle && !hasComedy) {
+    categories.add("business");
+  }
+  if (hasLecture && !hasBusinessTitle) {
     categories.add("tech");
     tags.add("talk");
   }
@@ -323,8 +337,13 @@ export function funcheapTaxonomy(
   }
   if (slugSet.has("club-dj")) categories.add("music.electronic");
   if (hasTheater && !hasComedy) categories.add("arts");
-  if (hasOutdoors) categories.add("outdoors");
-  if (hasSports) {
+  if (hasOutdoorsSlug) categories.add("outdoors");
+  if (hasWellness) {
+    categories.add("wellness");
+    if (/\byoga\b/i.test(text)) tags.add("yoga");
+    else tags.add("wellness");
+  }
+  if (hasSports && !hasWellness) {
     categories.add("outdoors");
     tags.add("sports");
   }
@@ -362,7 +381,7 @@ export function funcheapTaxonomy(
 
   if (slugSet.has("fairs-festivals")) tags.add("festival");
   if (slugSet.has("shopping-fashion")) tags.add("shopping");
-  if (hasTechTitle && !hasComedy) categories.add("tech");
+  if (hasTechTitle && !hasComedy && !hasBusinessTitle) categories.add("tech");
 
   const priced = parsePrice(text);
   if (priced.isFree) categories.add("free");
@@ -468,7 +487,98 @@ export type EventbriteEnrichment = {
   priceMin: number | null;
   priceMax: number | null;
   isFree: boolean;
+  venueName: string | null;
+  address: string | null;
 };
+
+/** Format schema.org PostalAddress / Place into venue + single-line address. */
+export function parseEventbriteJsonLdLocation(data: unknown): {
+  venueName: string | null;
+  address: string | null;
+} {
+  if (!data || typeof data !== "object") {
+    return { venueName: null, address: null };
+  }
+  const root = data as Record<string, unknown>;
+  const location = root.location;
+  if (!location || typeof location !== "object") {
+    return { venueName: null, address: null };
+  }
+  const place = location as Record<string, unknown>;
+  const venueName =
+    typeof place.name === "string" ? place.name.replace(/\s+/g, " ").trim() : null;
+
+  const addr = place.address;
+  let address: string | null = null;
+  if (typeof addr === "string") {
+    address = addr.replace(/\s+/g, " ").trim() || null;
+  } else if (addr && typeof addr === "object") {
+    const a = addr as Record<string, unknown>;
+    const street =
+      typeof a.streetAddress === "string"
+        ? a.streetAddress.replace(/\s+/g, " ").trim()
+        : "";
+    const locality =
+      typeof a.addressLocality === "string"
+        ? a.addressLocality.replace(/\s+/g, " ").trim()
+        : "";
+    const region =
+      typeof a.addressRegion === "string"
+        ? a.addressRegion.replace(/\s+/g, " ").trim()
+        : "";
+    const postal =
+      typeof a.postalCode === "string"
+        ? a.postalCode.replace(/\s+/g, " ").trim()
+        : "";
+    // streetAddress often already includes city/region/zip — avoid duplication.
+    if (street && /,\s*[A-Z]{2}\b|\d{5}/.test(street)) {
+      address = street;
+    } else {
+      const cityRegion = [locality, region].filter(Boolean).join(", ");
+      const cityRegionZip = [cityRegion, postal].filter(Boolean).join(" ");
+      address =
+        [street, cityRegionZip].filter(Boolean).join(", ").replace(/\s+/g, " ").trim() ||
+        null;
+    }
+  }
+
+  return {
+    venueName: venueName || null,
+    address: address || null,
+  };
+}
+
+function eventbriteLocationFromHtml(html: string): {
+  venueName: string | null;
+  address: string | null;
+} {
+  const $ = cheerio.load(html);
+  let venueName: string | null = null;
+  let address: string | null = null;
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (venueName && address) return;
+    const raw = $(el).html()?.trim();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      const nodes = Array.isArray(parsed) ? parsed : [parsed];
+      for (const node of nodes) {
+        if (!node || typeof node !== "object") continue;
+        const type = (node as Record<string, unknown>)["@type"];
+        const types = Array.isArray(type) ? type : [type];
+        if (!types.some((t) => String(t).toLowerCase() === "event")) continue;
+        const loc = parseEventbriteJsonLdLocation(node);
+        if (!venueName && loc.venueName) venueName = loc.venueName;
+        if (!address && loc.address) address = loc.address;
+      }
+    } catch {
+      /* ignore malformed JSON-LD */
+    }
+  });
+
+  return { venueName, address };
+}
 
 /** Scrape public Eventbrite listing metadata linked from Funcheap posts. */
 export async function enrichEventbriteListing(
@@ -491,12 +601,13 @@ export async function enrichEventbriteListing(
     $('meta[property="og:description"]').attr("content")?.trim() ?? null;
   const imageRaw = $('meta[property="og:image"]').attr("content")?.trim() ?? null;
   const imageUrl = imageRaw ? normalizeFuncheapCdnUrl(imageRaw) : null;
+  const place = eventbriteLocationFromHtml(html);
 
   const text = `${title} ${description ?? ""}`.toLowerCase();
   const tags = new Set<string>(["eventbrite"]);
   const categories = new Set<string>();
 
-  if (/comedy|standup|stand-up|improv/i.test(text)) {
+  if (textMentionsComedy(text)) {
     categories.add("comedy.showcase");
     tags.add("comedy");
   }
@@ -520,6 +631,8 @@ export async function enrichEventbriteListing(
     priceMin,
     priceMax,
     isFree,
+    venueName: place.venueName,
+    address: place.address,
   };
 }
 
@@ -533,13 +646,8 @@ function parseFuncheapDate(raw: string): Date | null {
 }
 
 function inferCity(classes: string, title: string): string {
-  const t = `${classes} ${title}`.toLowerCase();
-  if (t.includes("oakland") || t.includes("region-east-bay")) return "oakland";
-  if (t.includes("berkeley")) return "berkeley";
-  if (t.includes("san jose") || t.includes("south-bay")) return "san_jose";
-  if (t.includes("healdsburg") || t.includes("marin") || t.includes("north-bay"))
-    return "marin";
-  return "sf";
+  // Prefer title/venue phrases (e.g. "… (Redwood City)") over CSS region buckets.
+  return inferBayCityFromText(`${title} ${classes}`, "sf");
 }
 
 function stripHtml(html: string): string {
@@ -677,6 +785,100 @@ export type FuncheapEnrichment = {
 };
 
 /**
+ * Parse venue + street from Funcheap `#stats .left`.
+ * Handles both `/venue/` taxonomy links and plain spans:
+ *   `<a href="/venue/…">The Function</a> | 1414 Market Street, San Francisco, CA`
+ *   `<span>Mabuhay Gardens</span> <span>| 435 Broadway St</span>`
+ */
+export function parseFuncheapStatsLocation($: cheerio.CheerioAPI): {
+  venueName: string | null;
+  address: string | null;
+  neighborhood: string | null;
+} {
+  const neighborhood =
+    decodeEntities(
+      $(".region-links a").first().text().replace(/\s+/g, " ").trim(),
+    ) || null;
+
+  let venueName =
+    decodeEntities(
+      $('a[href*="/venue/"]').first().text().replace(/\s+/g, " ").trim(),
+    ) || null;
+
+  const statsLeft = $("#stats .left").first().clone();
+  statsLeft.find("style, script, .region-links, .cost, .tooltip, a.tt").remove();
+
+  // Prefer the line after the date/cost block (typically after <br>).
+  const afterBr = statsLeft.find("br").last().nextAll();
+  const lineRoot = afterBr.length ? afterBr : statsLeft;
+  const linePlain = decodeEntities(
+    lineRoot
+      .map((_, el) => $(el).text())
+      .get()
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+
+  let address: string | null = null;
+
+  if (venueName && linePlain.includes(venueName)) {
+    const after = linePlain.split(venueName).slice(1).join(venueName);
+    const m = after.match(/^\s*\|\s*([^|]+)/);
+    if (m) {
+      address = cleanFuncheapAddress(m[1]!);
+    }
+  }
+
+  if (!venueName || !address) {
+    // Plain "Venue | Address" (no /venue/ link, or address without city suffix).
+    const pipe = linePlain.match(
+      /^(.+?)\s*\|\s*(.+)$/,
+    );
+    if (pipe) {
+      const left = pipe[1]!.replace(/\s+/g, " ").trim();
+      const right = cleanFuncheapAddress(pipe[2]!);
+      // Ignore leftover date/cost crumbs that sneak into the line.
+      if (
+        left &&
+        !/^\d{1,2}:\d{2}|cost:|free\*?$/i.test(left) &&
+        left.length < 80
+      ) {
+        if (!venueName) venueName = left;
+        if (!address && right) address = right;
+      }
+    }
+  }
+
+  // Fallback: whole stats text after known venue name.
+  if (venueName && !address) {
+    const statsPlain = decodeEntities(
+      statsLeft.text().replace(/\s+/g, " ").trim(),
+    );
+    if (statsPlain.includes(venueName)) {
+      const after = statsPlain.split(venueName).slice(1).join(venueName);
+      const m = after.match(/^\s*\|\s*([^|]+)/);
+      if (m) address = cleanFuncheapAddress(m[1]!);
+    }
+  }
+
+  return { venueName, address, neighborhood };
+}
+
+function cleanFuncheapAddress(raw: string): string | null {
+  const cleaned = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\.$/, "")
+    // Strip trailing region chips accidentally joined into the address span.
+    .replace(/\s+(?:San Francisco Bay Area|East Bay|Peninsula|North Bay)$/i, "")
+    .trim();
+  if (!cleaned) return null;
+  if (/^(cost|free\*?)$/i.test(cleaned)) return null;
+  return cleaned;
+}
+
+/**
  * Lazy detail enrich for Funcheap posts — description + Event Details link.
  * Called on event detail open (mirrors Luma registration refresh).
  * Content is static editorial, so we cache once in DB after first open.
@@ -722,30 +924,10 @@ export async function enrichFuncheapEvent(
     description = description.slice(0, 4000);
   }
 
-  const venueName =
-    decodeEntities(
-      $('a[href*="/venue/"]').first().text().replace(/\s+/g, " ").trim(),
-    ) || null;
-
-  const region =
-    decodeEntities(
-      $(".region-links a").first().text().replace(/\s+/g, " ").trim(),
-    ) || null;
-
-  // Prefer text after venue link: "Venue | 24th St. & Sanchez St, San Francisco, CA"
-  let address: string | null = null;
-  const statsLeft = $("#stats .left").first().clone();
-  statsLeft.find("style, script, .region-links, .cost").remove();
-  const statsPlain = decodeEntities(
-    statsLeft.text().replace(/\s+/g, " ").trim(),
-  );
-  if (venueName && statsPlain.includes(venueName)) {
-    const after = statsPlain.split(venueName).slice(1).join(venueName);
-    const m = after.match(
-      /^\s*\|\s*([^|]+?(?:San Francisco|Oakland|Berkeley|, CA)[^|]*)/i,
-    );
-    if (m) address = m[1]!.replace(/\s+/g, " ").trim().replace(/\.$/, "");
-  }
+  const fromStats = parseFuncheapStatsLocation($);
+  let venueName = fromStats.venueName;
+  let address = fromStats.address;
+  const region = fromStats.neighborhood;
 
   const imageUrl = extractFuncheapPostImage($);
 
@@ -777,6 +959,10 @@ export async function enrichFuncheapEvent(
       if (eb.priceMin != null) priceMin = eb.priceMin;
       if (eb.priceMax != null) priceMax = eb.priceMax;
       isFree = eb.isFree;
+      // Prefer Eventbrite Place JSON-LD for location when linked — Funcheap
+      // often omits /venue/ links, truncates streets, or typos the number.
+      if (eb.venueName) venueName = eb.venueName;
+      if (eb.address) address = eb.address;
     }
   }
 

@@ -4,7 +4,6 @@ import type { FeedCard } from "@bored/shared";
 import {
   feedVideoPosterUrl,
   formatTimeAgo,
-  youtubeEmbedUrl,
   youtubeVideoIdFromUrl,
 } from "@bored/shared";
 import { SaveButton } from "@/components/SaveButton";
@@ -14,6 +13,7 @@ import {
 } from "@/lib/api";
 import { eventOutboundHref } from "@/lib/outbound";
 import { ReelInfoSheet } from "@/components/detail/ReelInfoSheet";
+import { YoutubeShortFrame } from "@/components/detail/YoutubeShortFrame";
 import { usePathname } from "next/navigation";
 import {
   useEffect,
@@ -149,16 +149,10 @@ function ReelSlideMedia({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nativeFailed, setNativeFailed] = useState(false);
+  const [ytFailed, setYtFailed] = useState(false);
 
-  const ytId = youtubeVideoIdFromUrl(card.url);
-  const ytSrc =
-    card.source === "youtube"
-      ? youtubeEmbedUrl(ytId, {
-          autoplay: active,
-          mute: muted,
-          controls: false,
-        })
-      : null;
+  const ytId =
+    card.source === "youtube" ? youtubeVideoIdFromUrl(card.url) : null;
 
   // Always use API proxies — Instagram CDN blocks cross-origin media (CORP).
   const streamUrl =
@@ -170,6 +164,7 @@ function ReelSlideMedia({
 
   useEffect(() => {
     setNativeFailed(false);
+    setYtFailed(false);
   }, [card.id]);
 
   useEffect(() => {
@@ -205,24 +200,25 @@ function ReelSlideMedia({
     },
   };
 
-  if (ytSrc && active) {
+  if (card.source === "youtube" && ytId && active && !ytFailed) {
     return (
       <>
-        <iframe
+        <YoutubeShortFrame
           key={`${card.id}:play:${muted ? "m" : "u"}`}
           className="reels-player__media"
-          src={ytSrc}
+          videoId={ytId}
           title={card.title}
-          allow="autoplay; encrypted-media; picture-in-picture"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
+          autoplay
+          mute={muted}
+          controls={false}
+          onFatalError={() => setYtFailed(true)}
         />
         <button {...hitProps} />
       </>
     );
   }
 
-  if (card.source === "youtube") {
+  if (card.source === "youtube" && !ytFailed) {
     return (
       <>
         {posterUrl ? (
@@ -233,6 +229,32 @@ function ReelSlideMedia({
         )}
         <button {...hitProps} />
       </>
+    );
+  }
+
+  if (card.source === "youtube" && ytFailed) {
+    return (
+      <div className="reels-player__fallback">
+        {posterUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="reels-player__media" src={posterUrl} alt="" />
+        ) : (
+          <div className="reels-player__media reels-player__media--empty" />
+        )}
+        <div className="reels-player__fallback-cta">
+          <p className="reels-player__ig-note">
+            This short can&apos;t play here.
+          </p>
+          <a
+            className="btn reels-player__watch-btn"
+            href={eventOutboundHref(card.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Watch on YouTube
+          </a>
+        </div>
+      </div>
     );
   }
 

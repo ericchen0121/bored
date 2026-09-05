@@ -5,7 +5,17 @@
  *
  * Used by API `presentEvent` (maps) and web event weather. Prefer real
  * upstream lat/lng; never invent coords when nothing local matches.
+ *
+ * Note: `events.city` is often a feed metro slug (`sf` / `la` / `chicago`),
+ * not a geographic locality — do not treat those as map pins.
  */
+
+import {
+  CHI_DEFAULT,
+  FEED_CITIES,
+  LA_DEFAULT,
+  SF_DEFAULT,
+} from "./taxonomy";
 
 export type VenueGeoHit = {
   lat: number;
@@ -13,6 +23,21 @@ export type VenueGeoHit = {
   /** Matched label for debugging */
   label: string;
 };
+
+/** Metro centroids used as weak placeholders when city is only a feed slug. */
+const METRO_CENTROIDS: ReadonlyArray<{ lat: number; lng: number }> = [
+  { lat: SF_DEFAULT.lat, lng: SF_DEFAULT.lng },
+  { lat: CHI_DEFAULT.lat, lng: CHI_DEFAULT.lng },
+  { lat: LA_DEFAULT.lat, lng: LA_DEFAULT.lng },
+];
+
+function isMetroCentroid(lat: number, lng: number): boolean {
+  return METRO_CENTROIDS.some(
+    (c) => Math.abs(c.lat - lat) < 1e-4 && Math.abs(c.lng - lng) < 1e-4,
+  );
+}
+
+const FEED_CITY_SLUGS = new Set<string>(FEED_CITIES);
 
 type VenueGeoEntry = {
   /** Lowercase needles — any match wins */
@@ -805,7 +830,9 @@ function matchLocality(
   text: string,
 ): VenueGeoHit | null {
   const cityNorm = cityField.trim().toLowerCase().replace(/_/g, " ");
-  if (cityNorm) {
+  // Feed metro slugs (`sf`/`la`/`chicago`) are not geographic localities.
+  // Prefer address / venue / neighborhood free text; chicago still matches via text.
+  if (cityNorm && !FEED_CITY_SLUGS.has(cityNorm)) {
     for (const entry of LOCALITY_GEO) {
       if (
         entry.match.some(
@@ -834,9 +861,46 @@ function matchLocality(
   return null;
 }
 
+function inferCoordsFromPlaceText(input: {
+  venueName?: string | null;
+  title?: string | null;
+  address?: string | null;
+  city?: string | null;
+  neighborhood?: string | null;
+}): VenueGeoHit | null {
+  const venueText = haystack([
+    input.venueName,
+    input.title,
+    input.address,
+    input.neighborhood,
+  ]);
+  if (venueText) {
+    const venue =
+      matchGeoEntry(venueText, SF_VENUE_GEO) ??
+      matchGeoEntry(venueText, LA_VENUE_GEO);
+    if (venue) return venue;
+  }
+
+  const hoodText = haystack([input.neighborhood, input.address, input.title]);
+  if (hoodText) {
+    const hood = matchGeoEntry(hoodText, SF_NEIGHBORHOOD_GEO);
+    if (hood) return hood;
+  }
+
+  const localityText = haystack([
+    input.city,
+    input.neighborhood,
+    input.address,
+    input.venueName,
+    input.title,
+  ]);
+  return matchLocality(input.city ?? "", localityText);
+}
+
 /**
- * If lat/lng are missing, try curated venue → neighborhood → city/address locality.
- * Does not override existing coordinates.
+ * If lat/lng are missing (or only a metro feed-slug centroid), try curated
+ * venue → neighborhood → city/address locality.
+ * Does not override real upstream coordinates.
  *
  * Contract: any listing with a usable address or city/neighborhood should resolve
  * to local coords for weather + maps. Add venues/localities here as gaps appear.
@@ -862,48 +926,25 @@ export function resolveEventCoords(input: {
       : input.lng != null && input.lng !== ""
         ? Number(input.lng)
         : null;
-  if (
+  const hasFinite =
     lat != null &&
     lng != null &&
     Number.isFinite(lat) &&
-    Number.isFinite(lng)
-  ) {
+    Number.isFinite(lng);
+  // SF/LA/CHI downtown centroids are often stamped from feed city=`sf` etc.
+  // Treat those as weak so Redwood City / Walnut Creek text can win.
+  const weakCentroid = hasFinite && isMetroCentroid(lat, lng);
+  if (hasFinite && !weakCentroid) {
     return { lat, lng };
   }
 
-  const venueText = haystack([
-    input.venueName,
-    input.title,
-    input.address,
-    input.neighborhood,
-  ]);
-  if (venueText) {
-    const venue =
-      matchGeoEntry(venueText, SF_VENUE_GEO) ??
-      matchGeoEntry(venueText, LA_VENUE_GEO);
-    if (venue) {
-      return { lat: venue.lat, lng: venue.lng, geoSource: venue.label };
-    }
+  const inferred = inferCoordsFromPlaceText(input);
+  if (inferred) {
+    return { lat: inferred.lat, lng: inferred.lng, geoSource: inferred.label };
   }
 
-  const hoodText = haystack([input.neighborhood, input.address, input.title]);
-  if (hoodText) {
-    const hood = matchGeoEntry(hoodText, SF_NEIGHBORHOOD_GEO);
-    if (hood) {
-      return { lat: hood.lat, lng: hood.lng, geoSource: hood.label };
-    }
-  }
-
-  const localityText = haystack([
-    input.city,
-    input.neighborhood,
-    input.address,
-    input.venueName,
-    input.title,
-  ]);
-  const locality = matchLocality(input.city ?? "", localityText);
-  if (locality) {
-    return { lat: locality.lat, lng: locality.lng, geoSource: locality.label };
+  if (hasFinite) {
+    return { lat, lng };
   }
 
   return { lat: null, lng: null };

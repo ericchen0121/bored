@@ -11,6 +11,8 @@ export const INTEREST_CATEGORIES = [
   "music.country",
   "music.pop",
   "music.rnb",
+  "music.soul",
+  "music.funk",
   "music.house",
   "music.tech_house",
   "music.techno",
@@ -24,9 +26,11 @@ export const INTEREST_CATEGORIES = [
   "comedy.open_mic",
   "comedy.underground",
   "tech",
+  "business",
   "food",
   "arts",
   "outdoors",
+  "wellness",
   "nightlife",
   "family",
   "movies",
@@ -36,6 +40,29 @@ export const INTEREST_CATEGORIES = [
 ] as const;
 
 export type InterestCategory = (typeof INTEREST_CATEGORIES)[number];
+
+/**
+ * Coarse / meta labels that alone do not count as a strong interest signal.
+ * Events with only these (or empty) are "weak" and eligible for LLM taxonomy.
+ */
+export const WEAK_ONLY_CATEGORIES = new Set<string>(["free", "nightlife"]);
+
+/** True when at least one category is a real interest (music.*, comedy.*, food, …). */
+export function hasStrongInterestCategory(
+  categories: string[] | null | undefined,
+): boolean {
+  for (const c of categories ?? []) {
+    if (!WEAK_ONLY_CATEGORIES.has(c)) return true;
+  }
+  return false;
+}
+
+/** Inverse of {@link hasStrongInterestCategory} — sparse taxonomy from heuristics. */
+export function isWeakEventTaxonomy(
+  categories: string[] | null | undefined,
+): boolean {
+  return !hasStrongInterestCategory(categories);
+}
 
 /** Fine-grained electronic / dance genres (19hz / RA tags → tastes) */
 export const MUSIC_DANCE_GENRE_CATEGORIES = [
@@ -60,6 +87,8 @@ export const MUSIC_LIVE_GENRE_CATEGORIES = [
   "music.jazz",
   "music.hip_hop",
   "music.rnb",
+  "music.soul",
+  "music.funk",
   "music.folk",
   "music.country",
   "music.pop",
@@ -89,7 +118,9 @@ export const INTEREST_LABELS: Record<InterestCategory, string> = {
   "music.folk": "Folk",
   "music.country": "Country",
   "music.pop": "Pop",
-  "music.rnb": "R&B / soul",
+  "music.rnb": "R&B",
+  "music.soul": "Soul",
+  "music.funk": "Funk",
   "music.house": "House",
   "music.tech_house": "Tech house",
   "music.techno": "Techno",
@@ -98,14 +129,21 @@ export const INTEREST_LABELS: Record<InterestCategory, string> = {
   "music.trance": "Trance",
   "music.hip_hop": "Hip-hop",
   "music.latin": "Latin",
+  /** Dedicated rooms (Punch Line, Cobb's) */
   "comedy.club": "Comedy clubs",
-  "comedy.showcase": "Showcases",
+  /**
+   * Billed multi-comic / headliner nights that aren't open mics or club residencies.
+   * Default comedy bucket when we know it's comedy but not club/open-mic/underground.
+   */
+  "comedy.showcase": "Comedy shows",
   "comedy.open_mic": "Open mics",
   "comedy.underground": "Underground comedy",
   tech: "Tech",
+  business: "Business",
   food: "Food",
   arts: "Arts",
   outdoors: "Outdoors",
+  wellness: "Wellness",
   nightlife: "Nightlife",
   family: "Family",
   movies: "Movies",
@@ -128,6 +166,8 @@ export const CATEGORY_TAG_LABELS: Record<string, string> = {
   "music.country": "Country",
   "music.pop": "Pop",
   "music.rnb": "R&B",
+  "music.soul": "Soul",
+  "music.funk": "Funk",
   "music.house": "House",
   "music.tech_house": "Tech house",
   "music.techno": "Techno",
@@ -141,9 +181,11 @@ export const CATEGORY_TAG_LABELS: Record<string, string> = {
   "comedy.open_mic": "Open mic",
   "comedy.underground": "Comedy",
   tech: "Tech",
+  business: "Business",
   food: "Food",
   arts: "Arts",
   outdoors: "Outdoors",
+  wellness: "Wellness",
   nightlife: "Nightlife",
   family: "Family",
   movies: "Movies",
@@ -285,7 +327,9 @@ export function categoriesFromMusicGenreLabel(
   if (/\b(indie|alternative|alt\s*rock)\b/.test(t)) out.add("music.indie");
   if (/\b(folk|americana|bluegrass)\b/.test(t)) out.add("music.folk");
   if (/\bcountry\b/.test(t)) out.add("music.country");
-  if (/\b(r&b|r and b|rnb|soul|funk)\b/.test(t)) out.add("music.rnb");
+  if (/\b(r&b|r and b|rnb)\b/.test(t)) out.add("music.rnb");
+  if (/\bsoul\b/.test(t)) out.add("music.soul");
+  if (/\bfunk\b/.test(t) && !/\bbaile funk\b/.test(t)) out.add("music.funk");
   if (/\bpop\b/.test(t)) out.add("music.pop");
   // Rock after more specific rock subtypes so metal/punk/indie win their chips too.
   if (/\brock\b/.test(t) && !out.has("music.metal") && !out.has("music.punk")) {
@@ -381,10 +425,12 @@ export type EventTypeKind =
   | "music"
   | "comedy"
   | "tech"
+  | "business"
   | "food"
   | "arts"
   | "theater"
   | "outdoors"
+  | "wellness"
   | "nightlife"
   | "family"
   | "movies"
@@ -402,10 +448,12 @@ const TYPE_META: Record<EventTypeKind, EventTypeMeta> = {
   music: { kind: "music", label: "Music", className: "type-music" },
   comedy: { kind: "comedy", label: "Comedy", className: "type-comedy" },
   tech: { kind: "tech", label: "Tech", className: "type-tech" },
+  business: { kind: "business", label: "Business", className: "type-business" },
   food: { kind: "food", label: "Food", className: "type-food" },
   arts: { kind: "arts", label: "Arts", className: "type-arts" },
   theater: { kind: "theater", label: "Theater", className: "type-theater" },
   outdoors: { kind: "outdoors", label: "Outdoors", className: "type-outdoors" },
+  wellness: { kind: "wellness", label: "Wellness", className: "type-wellness" },
   nightlife: { kind: "nightlife", label: "Nightlife", className: "type-nightlife" },
   family: { kind: "family", label: "Family", className: "type-family" },
   movies: { kind: "movies", label: "Film", className: "type-movies" },
@@ -419,9 +467,11 @@ const TYPE_PRIORITY: EventTypeKind[] = [
   "comedy",
   "movies",
   "tech",
+  "business",
   "food",
   "arts",
   "theater",
+  "wellness",
   "outdoors",
   "nightlife",
   "family",
@@ -433,9 +483,11 @@ function categoryToKind(cat: string): EventTypeKind | null {
   if (cat.startsWith("comedy.")) return "comedy";
   if (cat.startsWith("movies")) return "movies";
   if (cat === "tech") return "tech";
+  if (cat === "business") return "business";
   if (cat === "food") return "food";
   if (cat === "arts") return "arts";
   if (cat === "outdoors") return "outdoors";
+  if (cat === "wellness") return "wellness";
   if (cat === "nightlife") return "nightlife";
   if (cat === "family") return "family";
   if (cat === "free") return "free";
@@ -460,6 +512,17 @@ export const COMEDY_SUBTYPES = [
 ] as const;
 
 /**
+ * Word-bounded comedy / standup / improv copy.
+ * `\bimprov\b` so marketing blurbs like "improves your well-being" do not match.
+ */
+export const COMEDY_COPY_RE =
+  /\b(?:comed(?:y|ic)|stand[\s-]?up|standup|improv|open\s*mic)\b/i;
+
+export function textMentionsComedy(text: string): boolean {
+  return COMEDY_COPY_RE.test(text);
+}
+
+/**
  * Infer a comedy.* category from title / venue / coarse TM labels.
  * Open mics are comedy in this product (SFStandup / OpenMicX convention).
  * Dedicated club rooms → comedy.club; title-only comedy nights → club too.
@@ -479,10 +542,7 @@ export function inferComedyCategory(opts: {
   if (/\bopen\s*mic\b/i.test(title) || /\bopen\s*mic\b/i.test(venue)) {
     return "comedy.open_mic";
   }
-  if (
-    /\b(comedy|stand-?up|standup|improv)\b/i.test(title) ||
-    /comedy/i.test(taxonomyBlob)
-  ) {
+  if (textMentionsComedy(title) || /comedy/i.test(taxonomyBlob)) {
     if (/\b(underground|alt\b|alternative)\b/i.test(title)) {
       return "comedy.underground";
     }
@@ -517,7 +577,7 @@ export function isComedyListing(item: {
   const venue = item.venueName ?? "";
   const tags = (item.tags ?? []).join(" ");
   const text = `${title} ${venue} ${tags}`;
-  if (/\b(comedy|standup|stand-up|stand up|improv|open mic)\b/i.test(text)) {
+  if (textMentionsComedy(text)) {
     return true;
   }
   return inferComedyCategory({ title, venueName: venue }) != null;
@@ -609,6 +669,7 @@ const TAG_TYPE_HINTS: { re: RegExp; kind: EventTypeKind }[] = [
   { re: /^(games|tournament)$/i, kind: "tech" },
   { re: /^(talk|politics|history|literature)$/i, kind: "tech" },
   { re: /^night market$/i, kind: "food" },
+  { re: /^(yoga|pilates|wellness|fitness)$/i, kind: "wellness" },
   { re: /^(festival|shopping|sports)$/i, kind: "arts" },
 ];
 
@@ -1130,7 +1191,7 @@ export function matchesFeedTopic(
       if (isMusicListing(item)) return true;
       if (/\b(concert|live music|tour\b|dj set|\bdj\b)\b/i.test(text)) return true;
       if (
-        /\b(rock|pop|jazz|hip hop|hip-hop|rap|metal|punk|indie|alternative|soul|r&b|country|folk)\b/i.test(
+        /\b(rock|pop|jazz|hip hop|hip-hop|rap|metal|punk|indie|alternative|soul|funk|r&b|country|folk)\b/i.test(
           tagBlob,
         )
       ) {
@@ -1607,6 +1668,93 @@ export function cityKeyFromLabel(raw?: string | null): string {
   return key;
 }
 
+/**
+ * Phrase → canonical Bay city key. Longer phrases first so
+ * "south san francisco" wins over "san francisco".
+ * Built once from `BAY_CITIES` + common aliases (Funcheap regions, 19hz).
+ */
+const BAY_CITY_TEXT_RULES: readonly { re: RegExp; key: string }[] = (() => {
+  const aliases: Array<[string, string]> = [
+    ["south san francisco", "south_san_francisco"],
+    ["redwood city", "redwood_city"],
+    ["mountain view", "mountain_view"],
+    ["palo alto", "palo_alto"],
+    ["menlo park", "menlo_park"],
+    ["san mateo", "san_mateo"],
+    ["san carlos", "san_carlos"],
+    ["foster city", "foster_city"],
+    ["daly city", "daly_city"],
+    ["half moon bay", "half_moon_bay"],
+    ["los altos", "los_altos"],
+    ["los gatos", "los_gatos"],
+    ["walnut creek", "walnut_creek"],
+    ["el cerrito", "el_cerrito"],
+    ["san leandro", "san_leandro"],
+    ["san lorenzo", "san_lorenzo"],
+    ["union city", "union_city"],
+    ["san jose", "san_jose"],
+    ["santa clara", "santa_clara"],
+    ["santa cruz", "santa_cruz"],
+    ["mill valley", "mill_valley"],
+    ["san rafael", "san_rafael"],
+    ["corte madera", "corte_madera"],
+    ["san francisco", "sf"],
+    ["east bay", "east_bay"],
+    ["south bay", "south_bay"],
+    ["north bay", "marin"],
+    ["region-east-bay", "east_bay"],
+    ["region-south-bay", "south_bay"],
+    ["region-north-bay", "marin"],
+    ["region-peninsula", "peninsula"],
+  ];
+  const fromKeys = [...BAY_CITIES]
+    .filter((k) => k !== "sf" && !k.includes(" "))
+    .map((k): [string, string] => [k.replace(/_/g, " "), k]);
+  const seen = new Set<string>();
+  const pairs: Array<[string, string]> = [];
+  for (const [phrase, key] of [...aliases, ...fromKeys]) {
+    const p = phrase.toLowerCase();
+    if (seen.has(p)) continue;
+    seen.add(p);
+    pairs.push([p, key]);
+  }
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  return pairs.map(([phrase, key]) => ({
+    re: new RegExp(
+      `(^|[^a-z0-9])${phrase.replace(/\s+/g, "\\s+")}${
+        phrase.includes("-") ? "" : "(?=[^a-z0-9]|$)"
+      }`,
+      "i",
+    ),
+    key,
+  }));
+})();
+
+/**
+ * Infer a Bay Area city key from free text (title, venue, CSS classes).
+ * Prefer specific peninsula / East Bay / South Bay labels over defaulting to SF.
+ */
+export function inferBayCityFromText(
+  text: string | null | undefined,
+  fallback: string = "sf",
+): string {
+  const t = (text ?? "").trim();
+  if (!t) return fallback;
+  // SF Richmond District ≠ Richmond, CA
+  const withoutSfRichmond = t.replace(
+    /\b(?:inner|outer)\s+richmond\b|\brichmond\s+district\b/gi,
+    " ",
+  );
+  // 19hz-style venue abbreviation ("… sj " / "(sj)")
+  if (/\bsj[\s)]/i.test(`${withoutSfRichmond} `)) return "san_jose";
+  for (const { re, key } of BAY_CITY_TEXT_RULES) {
+    if (re.test(withoutSfRichmond)) {
+      return key === "san_francisco" ? "sf" : key;
+    }
+  }
+  return fallback;
+}
+
 export function metroFromArea(area: FeedArea): FeedCity {
   if (area === "chicago") return "chicago";
   if (area === "la") return "la";
@@ -1637,6 +1785,28 @@ export function locationDefaultForArea(area: FeedArea) {
   if (area === "chicago") return CHI_DEFAULT;
   if (area === "la") return LA_DEFAULT;
   return SF_DEFAULT;
+}
+
+/**
+ * SQL pre-filter for timed feed fetches so `fetchLimit` applies per metro.
+ * Mirrors {@link eventInArea}: SF/Bay keep null/empty city; Chicago/LA require a
+ * known metro city (otherwise other metros crowd the day window and drop
+ * evening nightlife — e.g. Bay 19hz after Chicago/LA Ticketmaster).
+ */
+export function feedCityPrefilter(area: FeedArea): {
+  include: string[];
+  keepUnknown: boolean;
+} {
+  if (area === "chicago") {
+    return { include: [...CHI_CITIES], keepUnknown: false };
+  }
+  if (area === "la") {
+    return { include: [...LA_CITIES], keepUnknown: false };
+  }
+  if (area === "sf") {
+    return { include: [...SF_CITIES], keepUnknown: true };
+  }
+  return { include: [...BAY_CITIES], keepUnknown: true };
 }
 
 export function eventInArea(

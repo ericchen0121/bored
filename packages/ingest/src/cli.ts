@@ -15,6 +15,7 @@ const schedule = args.includes("--schedule");
 const phase1 = args.includes("--phase1");
 const backfillTicketImages = args.includes("--backfill-ticket-images");
 const backfillSportsLinks = args.includes("--backfill-sports-links");
+const backfillLlmTaxonomy = args.includes("--backfill-llm-taxonomy");
 const only = args.find((a) => a.startsWith("--only="))?.split("=")[1];
 
 async function main() {
@@ -30,6 +31,23 @@ async function main() {
     const { runBackfillSportsLinks } = await import("./backfillSportsLinks.js");
     await runBackfillSportsLinks(args);
     return;
+  }
+
+  if (backfillLlmTaxonomy) {
+    const { backfillLlmTaxonomy: runBackfill } = await import(
+      "./llmTaxonomy.js"
+    );
+    const limitRaw = args.find((a) => a.startsWith("--limit="))?.split("=")[1];
+    const limit = limitRaw ? Number(limitRaw) : 200;
+    const dryRun = args.includes("--dry-run");
+    const result = await runBackfill({
+      limit: Number.isFinite(limit) ? limit : 200,
+      dryRun,
+    });
+    console.log(
+      `[llm-taxonomy] scanned=${result.scanned} updated=${result.updated} skipped=${result.skipped}`,
+    );
+    process.exit(0);
   }
 
   const onlyIds = only

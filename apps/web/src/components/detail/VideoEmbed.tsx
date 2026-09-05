@@ -3,7 +3,6 @@
 import {
   feedVideoPosterUrl,
   isFeedVideo,
-  youtubeEmbedUrl,
   youtubeVideoIdFromUrl,
 } from "@bored/shared";
 import { useMemo, useState } from "react";
@@ -12,6 +11,7 @@ import {
   instagramMediaStreamUrl,
 } from "@/lib/api";
 import { eventOutboundHref } from "@/lib/outbound";
+import { YoutubeShortFrame } from "./YoutubeShortFrame";
 
 export function VideoEmbed({
   source,
@@ -30,14 +30,11 @@ export function VideoEmbed({
   eventId?: string;
 }) {
   const [nativeFailed, setNativeFailed] = useState(false);
+  const [ytFailed, setYtFailed] = useState(false);
 
   const ytId = useMemo(
     () => videoId ?? youtubeVideoIdFromUrl(url),
     [videoId, url],
-  );
-  const ytEmbed = useMemo(
-    () => youtubeEmbedUrl(ytId, { autoplay: true, mute: true }),
-    [ytId],
   );
   const streamUrl =
     source === "instagram" && eventId
@@ -50,18 +47,42 @@ export function VideoEmbed({
         ? posterUrl
         : feedVideoPosterUrl({ source, imageUrl: posterUrl, url });
 
-  if (source === "youtube" && ytEmbed) {
+  if (source === "youtube" && ytId && !ytFailed) {
     return (
       <section className="detail-body__reel" aria-label="YouTube short">
         <div className="detail-body__reel-frame detail-body__reel-frame--embed">
-          <iframe
-            src={ytEmbed}
+          <YoutubeShortFrame
+            className="detail-body__reel-video"
+            videoId={ytId}
             title={`YouTube: ${title}`}
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            referrerPolicy="strict-origin-when-cross-origin"
+            autoplay
+            mute
+            onFatalError={() => setYtFailed(true)}
           />
+        </div>
+      </section>
+    );
+  }
+
+  if (source === "youtube" && (ytFailed || ytId)) {
+    return (
+      <section className="detail-body__reel" aria-label="YouTube short">
+        <div className="detail-body__reel-frame detail-body__reel-frame--cta">
+          {safePoster ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="detail-body__reel-video" src={safePoster} alt="" />
+          ) : null}
+          <div className="detail-body__reel-cta">
+            <p>This short can&apos;t play here.</p>
+            <a
+              className="btn"
+              href={eventId ? eventOutboundHref(eventId) : url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Watch on YouTube
+            </a>
+          </div>
         </div>
       </section>
     );

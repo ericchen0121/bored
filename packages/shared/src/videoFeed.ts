@@ -86,20 +86,35 @@ export function feedVideoEmbedSrc(card: {
 
 export function youtubeEmbedUrl(
   videoId: string | null | undefined,
-  opts?: { autoplay?: boolean; mute?: boolean; controls?: boolean },
+  opts?: {
+    autoplay?: boolean;
+    mute?: boolean;
+    controls?: boolean;
+    /** Page origin — required for reliable IFrame API / embed checks. */
+    origin?: string | null;
+  },
 ): string | null {
   if (!videoId?.trim()) return null;
   const params = new URLSearchParams({
     rel: "0",
     playsinline: "1",
     modestbranding: "1",
+    enablejsapi: "1",
   });
   if (opts?.controls === false) params.set("controls", "0");
   if (opts?.autoplay) params.set("autoplay", "1");
   if (opts?.autoplay) {
     params.set("mute", opts.mute === false ? "0" : "1");
   }
+  const origin = opts?.origin?.trim();
+  if (origin) params.set("origin", origin);
   return `https://www.youtube-nocookie.com/embed/${videoId.trim()}?${params}`;
+}
+
+/** YT IFrame API onError codes that mean the short can't play in our embed. */
+export function isYoutubeEmbedFatalError(code: number): boolean {
+  // 2 invalid id, 5 HTML5/error, 100 not found, 101/150 embedding disabled
+  return code === 2 || code === 5 || code === 100 || code === 101 || code === 150;
 }
 
 /** Max reels in the For you / Today carousel — kept out of the ranked event slots. */

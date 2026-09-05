@@ -1,4 +1,4 @@
-import { cityKeyFromLabel, partifulFeedImageUrl } from "@bored/shared";
+import { cityKeyFromLabel, partifulFeedImageUrl, textMentionsComedy } from "@bored/shared";
 import {
   contentHash,
   type NormalizedEvent,
@@ -144,7 +144,7 @@ export function partifulCategoriesAndTags(opts: {
   ) {
     cats.add("food");
   }
-  if (/comedy|standup|stand-up|improv|drag show/i.test(text)) {
+  if (textMentionsComedy(text) || /\bdrag show\b/i.test(text)) {
     cats.add("comedy.showcase");
   }
   if (
